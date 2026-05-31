@@ -1,0 +1,1 @@
+# beko-uretim-planlama
