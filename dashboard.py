@@ -55,9 +55,7 @@ for logo_name in ["pngwing.com.png", "pngwing_com.png", "logo.png"]:
 
 st.markdown(f"""<style>
     {bg_css}
-    /* Streamlit araç çubuğunu gizle (sidebar menüsüne dokunma) */
-    [data-testid="stToolbar"] {{ display: none!important; }}
-    .stDeployButton {{ display: none!important; }}
+    /* Streamlit footer gizle */
     footer {{ visibility: hidden!important; }}
     header[data-testid="stHeader"] {{ background: rgba(0,20,60,0.95)!important; backdrop-filter: blur(10px); }}
 
