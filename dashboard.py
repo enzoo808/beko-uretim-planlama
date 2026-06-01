@@ -55,8 +55,22 @@ for logo_name in ["pngwing.com.png", "pngwing_com.png", "logo.png"]:
 
 st.markdown(f"""<style>
     {bg_css}
-    .block-container {{ max-width: 1300px; }}
+    /* Streamlit araç çubuğunu gizle */
+    [data-testid="stToolbar"] {{ display: none!important; }}
+    .stDeployButton {{ display: none!important; }}
+    #MainMenu {{ visibility: hidden!important; }}
+    footer {{ visibility: hidden!important; }}
     header[data-testid="stHeader"] {{ background: rgba(0,20,60,0.95)!important; backdrop-filter: blur(10px); }}
+
+    /* Sayfa açılış animasyonu */
+    @keyframes fadeSlideIn {{ from {{ opacity:0; transform:translateY(12px); }} to {{ opacity:1; transform:translateY(0); }} }}
+    @keyframes logoPulse {{ 0%,100% {{ filter:brightness(1); }} 50% {{ filter:brightness(1.4) drop-shadow(0 0 12px rgba(96,165,250,0.6)); }} }}
+    .block-container {{ max-width: 1300px; animation: fadeSlideIn 0.5s ease-out; }}
+    .beko-logo {{ animation: logoPulse 2.5s ease-in-out 1; }}
+
+    /* Sekme geçiş efekti */
+    .stTabs [data-baseweb="tab-panel"] {{ animation: fadeSlideIn 0.35s ease-out; }}
+
     section[data-testid="stSidebar"] {{ background: rgba(0,15,45,0.95)!important; }}
     section[data-testid="stSidebar"] .stSelectbox label,
     section[data-testid="stSidebar"] .stRadio label,
@@ -240,7 +254,7 @@ def analyze_issues():
 # =====================================================================
 # LOGO & BAŞLIK
 # =====================================================================
-logo_html = f'<img src="data:image/png;base64,{logo_b64}" style="height:60px;margin-right:16px;vertical-align:middle;">' if logo_b64 else ""
+logo_html = f'<img src="data:image/png;base64,{logo_b64}" class="beko-logo" style="height:60px;margin-right:16px;vertical-align:middle;">' if logo_b64 else ""
 st.markdown(f"""<div style="display:flex;align-items:center;margin-bottom:4px;">
     {logo_html}
     <div>
