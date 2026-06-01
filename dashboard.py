@@ -17,7 +17,10 @@ st.set_page_config(
 # =====================================================================
 # SABİTLER
 # =====================================================================
-ADMIN_SIFRE = "beko2026"
+YETKILI_SICILLER = {
+    "26127996",
+}
+# Yeni çalışan eklemek için yukarıdaki kümeye sicil numarasını ekleyin.
 
 KART_RENKLERI = {
     "F4": "#FFB3BA", "GB": "#A8E6CF", "GL": "#B3D4FF", "GX": "#FFFACD",
@@ -549,26 +552,29 @@ with tab_veri:
 
     if "auth" not in st.session_state:
         st.session_state.auth = False
+        st.session_state.auth_sicil = None
 
     if not st.session_state.auth:
         st.markdown('<div class="status-card status-yellow">'
-                    '<p style="color:#f59e0b;margin:0 0 8px 0;font-weight:600;">🔒 Bu bölüm şifre korumalıdır</p>'
-                    '<p style="color:#cbd5e1;margin:0;font-size:0.85rem;">Veri değişikliği yapmak için yönetici şifresini girin.</p>'
+                    '<p style="color:#f59e0b;margin:0 0 8px 0;font-weight:600;">🔒 Yetkili personel girişi gereklidir</p>'
+                    '<p style="color:#cbd5e1;margin:0;font-size:0.85rem;">Veri değişikliği yapmak için sicil numaranızı girin.</p>'
                     '</div>', unsafe_allow_html=True)
         pw1, pw2 = st.columns([3, 1])
         with pw1:
-            sifre = st.text_input("Şifre:", type="password", label_visibility="collapsed", placeholder="Yönetici şifresi")
+            sicil_input = st.text_input("Sicil No:", type="password", label_visibility="collapsed", placeholder="Sicil numaranız")
         with pw2:
             if st.button("Giriş Yap", use_container_width=True):
-                if sifre == ADMIN_SIFRE:
+                if sicil_input.strip() in YETKILI_SICILLER:
                     st.session_state.auth = True
+                    st.session_state.auth_sicil = sicil_input.strip()
                     st.rerun()
                 else:
-                    st.error("Yanlış şifre.")
+                    st.error("Yetkisiz sicil numarası.")
     else:
-        st.success("🔓 Yönetici erişimi aktif.")
+        st.success(f"🔓 Giriş yapıldı — Sicil: {st.session_state.auth_sicil}")
         if st.button("Oturumu Kapat", type="secondary"):
             st.session_state.auth = False
+            st.session_state.auth_sicil = None
             st.rerun()
         st.write("---")
 
