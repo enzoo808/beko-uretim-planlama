@@ -9,7 +9,7 @@ import plotly.graph_objects as go
 # SAYFA YAPILANDIRMASI
 # =====================================================================
 st.set_page_config(
-    page_title="Beko Çerkezköy — TV Anakart Üretim Planlama",
+    page_title="Beko Çerkezköy — Şasi Montaj Planlaması",
     page_icon="📺",
     layout="wide",
 )
@@ -240,16 +240,11 @@ def analyze_issues():
 # =====================================================================
 # LOGO & BAŞLIK
 # =====================================================================
-tarih_min = tarihler.get(str(gunler[0]), "") if gunler else ""
-tarih_max = tarihler.get(str(gunler[-1]), "") if gunler else ""
-horizon_text = f"{tarih_min} → {tarih_max} ({len(gunler)} iş günü)" if tarih_min else f"{len(gunler)} iş günü"
-
 logo_html = f'<img src="data:image/png;base64,{logo_b64}" style="height:60px;margin-right:16px;vertical-align:middle;">' if logo_b64 else ""
 st.markdown(f"""<div style="display:flex;align-items:center;margin-bottom:4px;">
     {logo_html}
     <div>
-        <h1 style="color:#fff;margin:0;font-size:1.5rem;font-weight:700;">Çerkezköy — TV Anakart Üretim Planlama Sonuçları</h1>
-        <p style="color:#60a5fa;margin:0;font-size:0.82rem;">Çok Dönemli Tampon‑Fizibil Üretim Planlama Modeli &nbsp;|&nbsp; {horizon_text} &nbsp;|&nbsp; YTÜ Endüstri Mühendisliği 2026</p>
+        <h1 style="color:#fff;margin:0;font-size:1.5rem;font-weight:700;">Çerkezköy Elektronik Fabrikası — Şasi ➜ Montaj Planlaması</h1>
     </div>
 </div>""", unsafe_allow_html=True)
 st.write("---")
