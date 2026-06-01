@@ -1,9 +1,10 @@
 import streamlit as st
 import pandas as pd
 import json
+import base64
+import os
 import plotly.express as px
 import plotly.graph_objects as go
-import base64
 
 # ==========================================
 # SAYFA YAPILANDIRMASI
@@ -14,11 +15,88 @@ st.set_page_config(
     layout="wide"
 )
 
-# Kurumsal Renkler
-BEKO_BLUE = "#0033A0"
+# ==========================================
+# BEKO BRANDING - ARKA PLAN & TEMA
+# ==========================================
+bg_css = ""
+if os.path.exists("aaa.jpg"):
+    with open("aaa.jpg", "rb") as img_file:
+        bg_b64 = base64.b64encode(img_file.read()).decode()
+    bg_css = f"""
+    .stApp {{
+        background: linear-gradient(
+            rgba(0, 20, 60, 0.88),
+            rgba(0, 10, 40, 0.92)
+        ),
+        url("data:image/jpeg;base64,{bg_b64}");
+        background-size: cover;
+        background-position: center;
+        background-attachment: fixed;
+    }}
+    """
 
-# Lütfen buraya kendi logonuzun gerçek Base64 kodunu yapıştırın
-LOGO_B64 = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII="
+st.markdown(f"""
+<style>
+    {bg_css}
+    .block-container {{
+        max-width: 1200px;
+    }}
+    header[data-testid="stHeader"] {{
+        background: rgba(0, 20, 60, 0.95) !important;
+        backdrop-filter: blur(10px);
+    }}
+    section[data-testid="stSidebar"] {{
+        background: rgba(0, 15, 45, 0.95) !important;
+    }}
+    section[data-testid="stSidebar"] .stSelectbox label,
+    section[data-testid="stSidebar"] h2 {{
+        color: #ffffff !important;
+    }}
+    div[data-testid="stMetric"] {{
+        background: rgba(255, 255, 255, 0.06);
+        border: 1px solid rgba(255, 255, 255, 0.1);
+        border-radius: 12px;
+        padding: 16px;
+        backdrop-filter: blur(10px);
+    }}
+    div[data-testid="stMetric"] label {{
+        color: #93c5fd !important;
+    }}
+    div[data-testid="stMetric"] div[data-testid="stMetricValue"] {{
+        color: #ffffff !important;
+    }}
+    .stTabs [data-baseweb="tab-list"] {{
+        gap: 8px;
+    }}
+    .stTabs [data-baseweb="tab"] {{
+        background: rgba(255, 255, 255, 0.05);
+        border-radius: 8px;
+        color: #93c5fd;
+    }}
+    .stTabs [aria-selected="true"] {{
+        background: #2563eb !important;
+        color: white !important;
+    }}
+    h2, h3 {{
+        color: #ffffff !important;
+    }}
+    .stCaption {{
+        color: #cbd5e1 !important;
+    }}
+    .stDataFrame {{
+        border-radius: 12px;
+        overflow: hidden;
+    }}
+    .stAlert {{
+        background: rgba(255, 255, 255, 0.05) !important;
+        border: 1px solid rgba(255, 255, 255, 0.1) !important;
+        color: #93c5fd !important;
+    }}
+    hr {{
+        border-color: rgba(255, 255, 255, 0.1) !important;
+    }}
+</style>
+""", unsafe_allow_html=True)
 
 # ==========================================
 # VERİ YÜKLEME VE İŞLEME
@@ -31,7 +109,7 @@ def load_data():
 try:
     data = load_data()
 except FileNotFoundError:
-    st.error("Hata: 'sonuc.json' dosyası bulunamadı. Lütfen dosyanın dashboard.py ile aynı dizinde olduğundan emin olun.")
+    st.error("Hata: 'sonuc.json' dosyası bulunamadı.")
     st.stop()
 
 meta = data.get("meta", {})
@@ -45,10 +123,8 @@ kartlar = meta.get("kartlar", [])
 # ==========================================
 col_logo, col_title = st.columns([1, 5])
 with col_logo:
-    st.image(
-        f"data:image/png;base64,{LOGO_B64}",
-        width=120
-    )
+    if os.path.exists("pngwing_com.png"):
+        st.image("pngwing_com.png", width=120)
 with col_title:
     st.markdown("""
     <div>
@@ -59,7 +135,7 @@ with col_title:
             Çok Dönemli Tampon-Fizibil Üretim Planlama Modeli &nbsp;|&nbsp; YTÜ Endüstri Mühendisliği Bitirme Projesi 2026
         </p>
     </div>
-    """, unsafe_allow_html=True) 
+    """, unsafe_allow_html=True)
 
 st.write("---")
 
@@ -83,7 +159,7 @@ with col4:
 st.write("---")
 
 # ==========================================
-# 2. OTD ALOKASYON PLANI (HEATMAP / TABLO)
+# 2. OTD ALOKASYON PLANI
 # ==========================================
 st.subheader("OTD Alokasyon Planı")
 
@@ -116,13 +192,11 @@ def style_otd_plan(df_to_style, df_compare=None):
             val = str(df_to_style.at[i, j]).replace(' ⚡', '').strip()
             bg_color = kart_renkleri.get(val, '#f0f2f6' if val != 'None' else '')
             cell_style = f"background-color: {bg_color}; color: black; text-align: center; font-weight: bold;"
-            
             if df_compare is not None:
                 val_clean = str(df_model_clean.at[i, j]).strip()
                 ref_clean = str(df_compare.at[i, j]).strip()
                 if val_clean != ref_clean and val_clean != 'None':
                     cell_style += " border: 3px solid #FF0000;"
-                    
             styles.at[i, j] = cell_style
     return styles
 
@@ -183,23 +257,20 @@ with col_grafik1:
     if secili_kart in meta.get("md_kartlari", []):
         fig_stok.add_trace(go.Scatter(x=df_analiz["Tarih"], y=df_analiz["KSM (MD->TA)"], mode='lines+markers', name="KSM (MD→TA)"))
     fig_stok.add_trace(go.Scatter(x=df_analiz["Tarih"], y=df_analiz["KST (TA->Montaj)"], mode='lines+markers', name="KST (TA→Montaj)"))
-
     fig_stok.add_hline(y=0, line_dash="dash", line_color="red", annotation_text="Kritik Stok Sınırı")
-    
     for col in ["KSO (OTD->MD)", "KSM (MD->TA)", "KST (TA->Montaj)"]:
         if col == "KSM (MD->TA)" and secili_kart not in meta.get("md_kartlari", []):
             continue
         zero_points = df_analiz[df_analiz[col] <= 0]
         if not zero_points.empty:
             fig_stok.add_trace(go.Scatter(
-                x=zero_points["Tarih"], 
-                y=zero_points[col], 
-                mode='markers', 
+                x=zero_points["Tarih"],
+                y=zero_points[col],
+                mode='markers',
                 marker=dict(color='red', size=12, symbol='x'),
                 showlegend=False,
                 hoverinfo="skip"
             ))
-
     fig_stok.update_layout(xaxis_title="Tarih", yaxis_title="Stok Miktarı", template="plotly_white", legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1))
     st.plotly_chart(fig_stok, use_container_width=True)
 
@@ -211,7 +282,6 @@ with col_grafik2:
         fig_uretim.add_trace(go.Bar(x=df_analiz["Tarih"], y=df_analiz["MD Üretim"], name="MD Üretim", marker_color="#0033A0"))
     fig_uretim.add_trace(go.Bar(x=df_analiz["Tarih"], y=df_analiz["TA Üretim"], name="TA Üretim", marker_color="#7B8CA3"))
     fig_uretim.add_trace(go.Scatter(x=df_analiz["Tarih"], y=df_analiz["Montaj Talebi"], mode='lines+markers', name="Son Montaj Talebi", line=dict(color='orange', width=3)))
-    
     fig_uretim.update_layout(barmode='group', xaxis_title="Tarih", yaxis_title="Miktar", template="plotly_white", legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1))
     st.plotly_chart(fig_uretim, use_container_width=True)
 
@@ -241,14 +311,11 @@ with col_table2:
         for k, v in fikstur_dict.items():
             parts = k.split('|')
             fikstur_list.append({"Kart": parts[0], "Gün": int(parts[1]), "Fikstür": v})
-            
         df_fikstur_raw = pd.DataFrame(fikstur_list)
         df_fikstur_pivot = df_fikstur_raw.pivot(index="Kart", columns="Gün", values="Fikstür").fillna(0).astype(int)
-        
         mevcut_gunler = sorted(df_fikstur_pivot.columns.tolist())
         df_fikstur_pivot = df_fikstur_pivot[mevcut_gunler]
         df_fikstur_pivot.columns = [tarihler.get(str(g), str(g)) for g in mevcut_gunler]
-        
         st.dataframe(df_fikstur_pivot.style.background_gradient(cmap="Blues"), use_container_width=True)
     else:
         st.info("Planlanan TA fikstür ataması bulunmamaktadır.")
