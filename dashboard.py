@@ -281,8 +281,8 @@ if highlight:
 # =====================================================================
 # SEKMELER
 # =====================================================================
-tab_kontrol, tab_durum, tab_detay, tab_veri = st.tabs(
-    ["📊 Kontrol Paneli", "📋 Kart Durumu", "📈 Detaylı Grafikler", "⚙️ Veri Yönetimi"]
+tab_kontrol, tab_durum, tab_detay, tab_uretim, tab_rapor, tab_veri = st.tabs(
+    ["📊 Kontrol Paneli", "📋 Kart Durumu", "📈 Detaylı Grafikler", "🏭 Üretim Planı", "📑 Rapor & Geçişler", "⚙️ Veri Yönetimi"]
 )
 
 
@@ -551,7 +551,269 @@ with tab_detay:
                 st.info(f"{kart} için planlanan fikstür ataması yok.")
 
 
-# =============  TAB 4: VERİ YÖNETİMİ  ================================
+# =============  TAB 4: ÜRETİM PLANI  ==================================
+with tab_uretim:
+    # ─── SUS VERİ KAYNAĞI ───────────────────────────────────────────────
+    SUS_DATES = ["07.05","08.05","09.05","11.05","12.05","13.05","14.05","15.05","16.05","18.05","20.05","21.05","22.05","23.05"]
+    SUS_DAYS  = ["Perş","Cum","Cmt","Pzt","Sal","Çar","Perş","Cum","Cmt","Pzt","Çar","Perş","Cum","Cmt"]
+    SUS_CARDS = ["F4","GB","GL","GX","LG","MR","V1","XC","XD","XGB","XGS","XR","Y3","Y4"]
+    SUS_COL_LABELS = [f"{d}\n{t}" for d, t in zip(SUS_DAYS, SUS_DATES)]
+
+    SUS_OTD_ALLOC = {"OD0":["XGS","XGS","XGB","XGS","XGS","XGS","XGS","XGS","XGS","XGS","XGS","XGS","",""],
+                     "OD2":["XGB","LG","LG","LG","XC","XGS","LG","LG","LG","LG","XGS","XGS","XGS","XGS"],
+                     "OD3":["XC","XC","XR","XR","XR","XR","XR","XR","XR","XC","XC","","",""],
+                     "OD4":["LG","LG","LG","LG","LG","LG","LG","LG","LG","","","","",""],
+                     "OD6":["Y4","Y4","","","","","","","","","","","",""]}
+    SUS_OTD_RATES = {"OD0":[1,1,1,1,1,1,1,1,1,1,1,1,1,1],"OD2":[1,.3,.7,1,.5,1,1,1,1,1,1,1,1,1],"OD3":[1,1,1,1,1,1,1,1,1,1,1,1,1,1],"OD4":[1,1,.5,1,1,1,.5,1,1,1,.5,1,1,1],"OD6":[1,1,1,1,1,1,1,1,1,1,1,1,1,1]}
+
+    SUS_OTD_DAILY = {"F4":[0,0,0,0,0,0,0,0,0,0,0,0,0,0],"GB":[0,0,0,0,0,0,0,0,0,0,0,0,0,0],"GL":[0,0,0,0,0,0,0,0,0,0,0,0,0,0],"GX":[0,0,0,0,0,0,0,0,0,0,0,0,0,0],"LG":[550,685,590,1000,550,550,725,1000,1000,450,0,0,0,0],"MR":[0,0,0,0,0,0,0,0,0,0,0,0,0,0],"V1":[0,0,0,0,0,0,0,0,0,0,0,0,0,0],"XC":[1140,1140,0,0,570,0,0,0,0,1140,1140,0,0,0],"XD":[0,0,0,0,0,0,0,0,0,0,0,0,0,0],"XGB":[880,0,927,0,0,0,0,0,0,0,0,0,0,0],"XGS":[1040,1040,0,1040,1040,2040,1040,1040,1040,1040,2040,2040,1000,1000],"XR":[0,0,610,610,610,610,610,610,610,0,0,0,0,0],"Y3":[0,0,0,0,0,0,0,0,0,0,0,0,0,0],"Y4":[750,750,0,0,0,0,0,0,0,0,0,0,0,0]}
+
+    SUS_OTD_REM = {"F4":[238,238,238,238,238,238,238,238,238,238,238,238,238,238],"GB":[0,0,0,0,0,0,0,0,0,0,0,0,0,0],"GL":[0,0,0,0,0,0,0,0,0,0,0,0,0,0],"GX":[200,200,200,200,200,200,200,200,200,200,200,200,200,200],"LG":[-107,-207,-172,-232,118,18,-82,-137,83,303,-27,-27,-27,-27],"MR":[108,108,108,108,108,108,108,108,108,108,108,108,108,108],"V1":[400,400,400,400,400,400,400,400,400,400,400,400,400,400],"XC":[654,634,614,-546,-1126,-556,-556,-556,-556,-556,584,1724,1724,1724],"XD":[1069,1069,1069,1069,1069,1069,1069,1069,1069,1069,1069,1069,1069,1069],"XGB":[206,611,136,588,588,588,588,588,588,588,588,588,588,588],"XGS":[955,895,835,-265,-325,-385,555,-605,-1765,-2925,-2985,-2045,-1105,-205],"XR":[380,150,-80,70,220,370,520,670,820,970,510,50,50,50],"Y3":[38,38,38,38,38,38,38,38,38,38,38,38,38,38],"Y4":[910,1160,1410,910,410,410,410,410,410,410,410,410,410,410]}
+
+    SUS_MD_ALLOC = {"MD1":[["XGS","XGS","XGS","XGS","XGS","XGS","XGS","XGS","XGS","XGS","XGS","XGS","XGS","XGS"]],"MD2":[["XGB","XGB","XGB","XGB","","","","XGS","XGS","XGS","","","",""],["Y4","Y4","Y4","Y4","Y4","","","","","","","","",""]]}
+    SUS_MD_DAILY = {"F4":[0,0,0,0,0,0,0,0,0,0,0,0,0,0],"GB":[0,0,0,0,0,0,0,0,0,0,0,0,0,0],"GL":[0,0,0,0,0,0,0,0,0,0,0,0,0,0],"GX":[0,0,0,0,0,0,0,0,0,0,0,0,0,0],"LG":[0,0,0,0,0,0,0,0,0,0,0,0,0,0],"MR":[0,0,0,0,0,0,0,0,0,0,0,0,0,0],"V1":[0,0,0,0,0,0,0,0,0,0,0,0,0,0],"XC":[0,0,0,0,0,0,0,0,0,0,0,0,0,0],"XD":[0,0,0,0,0,0,0,0,0,0,0,0,0,0],"XGB":[475,475,475,475,0,0,0,0,0,0,0,0,0,0],"XGS":[1100,1100,1100,1100,1100,1100,1100,2200,2200,2200,1100,1100,1100,1100],"XR":[0,0,0,0,0,0,0,0,0,0,0,0,0,0],"Y3":[0,0,0,0,0,0,0,0,0,0,0,0,0,0],"Y4":[500,500,500,500,500,0,0,0,0,0,0,0,0,0]}
+
+    SUS_MD_REM = {"F4":[28,28,28,28,28,28,28,28,28,28,28,28,28,28],"GB":[1188,1188,1188,1188,1188,1188,1188,1188,1188,1188,1188,1188,1188,1188],"GL":[644,644,644,644,644,644,644,644,644,644,644,644,644,644],"GX":[0,0,0,0,0,0,0,0,0,0,0,0,0,0],"LG":[0,0,0,0,0,0,0,0,0,0,0,0,0,0],"MR":[347,347,347,347,347,347,347,347,347,347,347,347,347,347],"V1":[27,27,27,27,27,27,27,27,27,27,27,27,27,27],"XC":[0,0,0,0,0,0,0,0,0,0,0,0,0,0],"XD":[0,0,0,0,0,0,0,0,0,0,0,0,0,0],"XGB":[-241,-594,-947,-1300,-825,-825,-825,-825,-825,-825,-1653,-1653,-1653,-1653],"XGS":[-717,-737,-477,-217,43,-257,-557,-857,-57,743,1543,1243,943,3143],"XR":[0,0,0,0,0,0,0,0,0,0,0,0,0,0],"Y3":[24,24,24,24,24,24,24,24,24,24,24,24,24,24],"Y4":[-74,112,141,13,-115,-243,-871,-871,-871,-871,-871,-871,-871,-871]}
+
+    SUS_TA_DAILY = {"F4":[0,0,0,0,0,0,0,0,0,0,0,0,0,0],"GB":[0,0,0,0,0,0,0,0,0,0,0,0,0,0],"GL":[0,0,0,0,0,0,0,0,0,0,0,0,0,0],"GX":[0,0,0,0,0,0,0,0,0,0,0,0,0,0],"LG":[650,650,650,650,650,650,650,780,780,780,780,0,0,0],"MR":[0,0,0,0,0,0,0,0,0,0,0,0,0,0],"V1":[0,0,0,0,0,0,0,0,0,0,0,0,0,0],"XC":[1160,1160,1160,1160,580,0,0,0,0,0,0,0,0,0],"XD":[0,0,0,0,0,0,0,0,0,0,0,0,0,0],"XGB":[828,828,828,828,0,0,0,0,0,0,828,0,0,0],"XGS":[840,1120,840,840,840,1400,1400,1400,1400,1400,1400,1400,1400,0],"XR":[0,230,230,460,460,460,460,460,460,460,460,460,0,0],"Y3":[0,0,0,0,0,0,0,0,0,0,0,0,0,0],"Y4":[628,314,471,628,628,628,628,0,0,0,0,0,0,0]}
+
+    SUS_TA_REM = {"F4":[349,349,349,349,349,349,349,349,349,349,349,349,349,349],"GB":[575,575,575,575,575,-90,-90,-90,-90,-90,-90,-90,-90,-90],"GL":[416,416,416,416,416,416,416,416,416,416,416,416,416,416],"GX":[667,667,667,117,117,117,-180,-180,-180,-180,-180,-180,-180,-180],"LG":[421,821,1421,1520,1220,369,-231,-729,-1092,-1313,-734,21,21,-5],"MR":[308,308,308,308,308,308,308,-45,-96,-96,-96,-96,-96,-96],"V1":[-9,-9,-9,-9,-9,-9,-9,-9,-9,-9,-9,-9,-9,-9],"XC":[1166,926,746,1156,1886,2466,2466,2466,2466,2466,2268,2268,1769,1282],"XD":[225,123,123,119,119,119,119,119,119,119,119,-616,-990,-1215],"XGB":[458,21,-237,-9,819,819,818,818,818,818,818,806,463,183],"XGS":[610,200,321,861,1701,2080,2534,2876,3076,1691,507,636,823,1380],"XR":[508,508,523,753,268,255,248,100,60,520,741,793,992,491],"Y3":[157,157,157,157,157,157,157,157,157,157,157,157,157,50],"Y4":[-99,529,843,214,-58,62,690,1318,1318,1318,1318,1318,1318,1318]}
+
+    SUS_ASSEMBLY = {"F4":[0,0,0,0,0,0,0,0,0,0,0,0,0,0],"GB":[0,0,0,0,0,665,0,0,0,0,0,0,0,0],"GL":[0,0,0,0,0,0,0,0,0,0,0,0,0,0],"GX":[0,0,0,550,0,0,297,0,0,0,0,0,0,0],"LG":[279,250,50,551,950,1501,1250,1148,1143,1001,201,25,0,26],"MR":[0,0,0,0,0,0,0,353,51,0,0,0,0,0],"V1":[258,0,0,0,0,0,0,0,0,0,0,0,0,0],"XC":[618,1400,1340,750,430,0,0,0,0,0,198,0,499,487],"XD":[625,102,0,4,0,0,0,0,0,0,0,735,374,225],"XGB":[205,1265,1086,600,0,0,1,0,0,0,0,840,343,280],"XGS":[1681,1250,999,300,0,461,946,1058,1200,2785,2584,1271,1213,843],"XR":[2,0,215,0,945,473,467,608,500,0,239,408,261,501],"Y3":[0,0,0,0,0,0,0,0,0,0,0,0,0,107],"Y4":[881,0,0,1100,900,508,0,0,0,0,0,0,0,0]}
+
+    SUS_INIT = {"F4":{"o":238,"m":28,"t":349},"GB":{"o":0,"m":1188,"t":575},"GL":{"o":0,"m":644,"t":416},"GX":{"o":200,"m":60,"t":667},"LG":{"o":543,"m":257,"t":700},"MR":{"o":108,"m":347,"t":308},"V1":{"o":400,"m":27,"t":249},"XC":{"o":1814,"m":57,"t":1784},"XD":{"o":1069,"m":12,"t":850},"XGB":{"o":681,"m":587,"t":663},"XGS":{"o":2055,"m":123,"t":2291},"XR":{"o":380,"m":6,"t":510},"Y3":{"o":38,"m":24,"t":157},"Y4":{"o":1410,"m":554,"t":782}}
+
+    # ─── TABLO OLUŞTURMA ──────────────────────────────────────────────────
+    def sus_make_table(card_data, show_init_key=None, init_source=None):
+        """SUS verisi için HTML tablo üretir."""
+        hdr = '<table class="otd-table"><thead><tr><th style="text-align:left;">Kart</th>'
+        if show_init_key: hdr += '<th>Stok₀</th>'
+        for i in range(14): hdr += f'<th>{SUS_DAYS[i]}<br><span style="font-size:0.6rem;opacity:0.7">{SUS_DATES[i]}</span></th>'
+        hdr += '</tr></thead><tbody>'
+        total = [0]*14
+        for c in SUS_CARDS:
+            vals = card_data.get(c, [0]*14)
+            bg = KART_RENKLERI.get(c, "#888")
+            hdr += f'<tr><td style="background:{bg};color:#1e293b;font-weight:700;text-align:left;padding-left:10px;border-radius:6px;">{c}</td>'
+            if show_init_key and init_source:
+                iv = init_source.get(c, {}).get(show_init_key, 0)
+                hdr += f'<td style="color:#93c5fd;font-weight:600;">{iv:,}</td>'
+            for i, v in enumerate(vals):
+                total[i] += v
+                if v < 0:
+                    hdr += f'<td style="background:rgba(239,68,68,0.25);color:#ef4444;font-weight:700;">{v:,}</td>'
+                elif v == 0:
+                    hdr += f'<td style="color:#475569;">—</td>'
+                else:
+                    hdr += f'<td style="color:#fff;">{v:,}</td>'
+            hdr += '</tr>'
+        # Toplam satırı
+        hdr += '<tr style="border-top:2px solid rgba(37,99,235,0.4);"><td class="otd-rh">TOPLAM</td>'
+        if show_init_key: hdr += '<td></td>'
+        for t in total:
+            hdr += f'<td style="color:#93c5fd;font-weight:800;">{t:,}</td>'
+        hdr += '</tr></tbody></table>'
+        return hdr
+
+    def sus_alloc_table(alloc_dict, line_names):
+        hdr = '<table class="otd-table"><thead><tr><th style="text-align:left;">Hat</th>'
+        for i in range(14): hdr += f'<th>{SUS_DAYS[i]}<br><span style="font-size:0.6rem;opacity:0.7">{SUS_DATES[i]}</span></th>'
+        hdr += '</tr></thead><tbody>'
+        for ln in line_names:
+            rows = alloc_dict.get(ln, [])
+            if not rows: continue
+            display_rows = rows if isinstance(rows[0], list) else [rows]
+            for ri, row in enumerate(display_rows):
+                hdr += f'<tr><td class="otd-rh">{ln if ri==0 else ""}</td>'
+                for v in row:
+                    if v:
+                        bg = KART_RENKLERI.get(v, "#666")
+                        hdr += f'<td style="background:{bg};color:#1e293b;font-weight:700;">{v}</td>'
+                    else:
+                        hdr += '<td class="otd-none">—</td>'
+                hdr += '</tr>'
+        hdr += '</tbody></table>'
+        return hdr
+
+    def sus_rate_table(rates_dict, line_names):
+        hdr = '<table class="otd-table"><thead><tr><th style="text-align:left;">Hat</th>'
+        for i in range(14): hdr += f'<th>{SUS_DAYS[i]}<br><span style="font-size:0.6rem;opacity:0.7">{SUS_DATES[i]}</span></th>'
+        hdr += '</tr></thead><tbody>'
+        for ln in line_names:
+            vals = rates_dict.get(ln, [])
+            if not vals: continue
+            hdr += f'<tr><td class="otd-rh">{ln}</td>'
+            for v in vals:
+                pct = int(v * 100)
+                clr = "#22c55e" if pct == 100 else "#f59e0b" if pct >= 50 else "#ef4444"
+                hdr += f'<td style="color:{clr};font-weight:600;">%{pct}</td>'
+            hdr += '</tr>'
+        hdr += '</tbody></table>'
+        return hdr
+
+    # ─── SEKME İÇERİĞİ ──────────────────────────────────────────────────
+    st.markdown(f"""<div style="display:flex;align-items:center;gap:12px;margin-bottom:8px;">
+        <span style="font-size:1.8rem;">🏭</span>
+        <div><h2 style="margin:0;font-size:1.3rem;">Üretim Planı — Excel Görünümü</h2>
+        <p style="color:#93c5fd;margin:0;font-size:0.8rem;">7–23 Mayıs 2026 • 14 İş Günü • Sasi_Uretim_Plani_v4</p></div>
+    </div>""", unsafe_allow_html=True)
+
+    up_otd, up_md, up_ta = st.tabs(["⚡ OTD (Otomatik Dizgi)", "✋ MD (Manuel Dizgi)", "🔬 TA (Test & Ayar)"])
+
+    with up_otd:
+        st.markdown("#### 🔧 Hat – Kart Alokasyonu")
+        st.markdown(sus_alloc_table(SUS_OTD_ALLOC, ["OD0","OD2","OD3","OD4","OD6"]), unsafe_allow_html=True)
+        with st.expander("📊 Hat Kullanım Oranları", expanded=False):
+            st.markdown(sus_rate_table(SUS_OTD_RATES, ["OD0","OD2","OD3","OD4","OD6"]), unsafe_allow_html=True)
+        st.markdown("#### 🏭 Günlük Üretim")
+        st.markdown(sus_make_table(SUS_OTD_DAILY), unsafe_allow_html=True)
+        st.markdown("#### 📦 Kalan Stok — KSO (OTD Çıkışı)")
+        st.caption("🔴 Negatif değerler stok açığını gösterir — üretim montaj talebini karşılayamıyor.")
+        st.markdown(sus_make_table(SUS_OTD_REM, "o", SUS_INIT), unsafe_allow_html=True)
+
+    with up_md:
+        st.markdown("#### 🔧 Hat – Kart Alokasyonu")
+        st.markdown(sus_alloc_table(SUS_MD_ALLOC, ["MD1","MD2"]), unsafe_allow_html=True)
+        st.markdown("#### 🏭 Günlük Üretim")
+        st.markdown(sus_make_table(SUS_MD_DAILY), unsafe_allow_html=True)
+        st.markdown("#### 📦 Kalan Stok — KSM (MD Çıkışı)")
+        st.caption("🔴 Negatif değerler tampon stok açığını gösterir — MD çıkışı TA girişini karşılayamıyor.")
+        st.markdown(sus_make_table(SUS_MD_REM, "m", SUS_INIT), unsafe_allow_html=True)
+
+    with up_ta:
+        st.markdown("#### 🏭 Günlük Üretim")
+        st.markdown(sus_make_table(SUS_TA_DAILY), unsafe_allow_html=True)
+        st.markdown("#### 📦 Kalan Stok — KST (TA Çıkışı)")
+        st.caption("🔴 Negatif değerler tampon stok açığını gösterir — TA çıkışı montaj talebini karşılayamıyor.")
+        st.markdown(sus_make_table(SUS_TA_REM, "t", SUS_INIT), unsafe_allow_html=True)
+        st.markdown("#### 🎯 Montaj Planı (Son Montaj Talebi)")
+        st.markdown(sus_make_table(SUS_ASSEMBLY), unsafe_allow_html=True)
+
+
+# =============  TAB 5: RAPOR & GEÇİŞLER  ==============================
+with tab_rapor:
+    st.markdown(f"""<div style="display:flex;align-items:center;gap:12px;margin-bottom:8px;">
+        <span style="font-size:1.8rem;">📑</span>
+        <div><h2 style="margin:0;font-size:1.3rem;">Rapor & Aşamalar Arası Geçişler</h2>
+        <p style="color:#93c5fd;margin:0;font-size:0.8rem;">Stok ihlalleri • Kart bazında geçiş özeti • Genel durum</p></div>
+    </div>""", unsafe_allow_html=True)
+
+    # ── Genel Durum Kartları ──
+    total_otd = sum(sum(v) for v in SUS_OTD_DAILY.values())
+    total_md  = sum(sum(v) for v in SUS_MD_DAILY.values())
+    total_ta  = sum(sum(v) for v in SUS_TA_DAILY.values())
+    total_asm = sum(sum(v) for v in SUS_ASSEMBLY.values())
+
+    # İhlal sayımı
+    viol_otd = sum(1 for c in SUS_CARDS for v in SUS_OTD_REM.get(c,[]) if v < 0)
+    viol_md  = sum(1 for c in SUS_CARDS for v in SUS_MD_REM.get(c,[]) if v < 0)
+    viol_ta  = sum(1 for c in SUS_CARDS for v in SUS_TA_REM.get(c,[]) if v < 0)
+    viol_total = viol_otd + viol_md + viol_ta
+
+    rc1, rc2, rc3, rc4, rc5 = st.columns(5)
+    with rc1: st.metric("OTD Üretim", f"{total_otd:,}")
+    with rc2: st.metric("MD Üretim", f"{total_md:,}")
+    with rc3: st.metric("TA Üretim", f"{total_ta:,}")
+    with rc4: st.metric("Montaj Talebi", f"{total_asm:,}")
+    with rc5: st.metric("Stok İhlali", f"{viol_total}", delta=f"KSO:{viol_otd} KSM:{viol_md} KST:{viol_ta}", delta_color="inverse")
+    st.write("---")
+
+    # ── Stok İhlalleri ──
+    st.subheader("🚨 Stok İhlalleri (Negatif Tampon)")
+    violations_list = []
+    for stage_name, rem_data in [("KSO (OTD)", SUS_OTD_REM), ("KSM (MD)", SUS_MD_REM), ("KST (TA)", SUS_TA_REM)]:
+        for c in SUS_CARDS:
+            for i, v in enumerate(rem_data.get(c, [])):
+                if v < 0:
+                    violations_list.append({"Kart": c, "Aşama": stage_name, "Gün": i+1, "Tarih": SUS_DATES[i], "Açık": v})
+
+    if violations_list:
+        df_viol = pd.DataFrame(violations_list)
+        neg_cards = df_viol["Kart"].nunique()
+        vc1, vc2, vc3 = st.columns(3)
+        with vc1:
+            st.markdown(f'<div class="status-card status-red"><div class="big-num">{len(violations_list)}</div><div class="big-label">Toplam İhlal (gün×kart)</div></div>', unsafe_allow_html=True)
+        with vc2:
+            st.markdown(f'<div class="status-card status-yellow"><div class="big-num">{neg_cards}</div><div class="big-label">Etkilenen Kart Sayısı</div></div>', unsafe_allow_html=True)
+        with vc3:
+            worst = df_viol.loc[df_viol["Açık"].idxmin()]
+            st.markdown(f'<div class="status-card status-red"><div class="big-num">{worst["Kart"]} {worst["Açık"]:,}</div><div class="big-label">En Büyük Açık ({worst["Aşama"]}, {worst["Tarih"]})</div></div>', unsafe_allow_html=True)
+
+        with st.expander("📋 Tüm İhlal Detayları", expanded=True):
+            def style_acik(val):
+                if isinstance(val, (int, float)) and val < 0:
+                    return "background:rgba(239,68,68,0.3);color:#ef4444;font-weight:700"
+                return ""
+            try:
+                st.dataframe(df_viol.style.map(style_acik, subset=["Açık"]).format({"Açık": "{:,.0f}"}),
+                             use_container_width=True, hide_index=True, height=min(500, 40 + 35*len(violations_list)))
+            except AttributeError:
+                st.dataframe(df_viol.style.applymap(style_acik, subset=["Açık"]).format({"Açık": "{:,.0f}"}),
+                             use_container_width=True, hide_index=True, height=min(500, 40 + 35*len(violations_list)))
+    else:
+        st.success("Tüm aşamalarda stok ihlali yok — tüm tampon stoklar pozitif. ✅")
+
+    st.write("---")
+
+    # ── Kart Bazında Geçiş Özeti ──
+    st.subheader("🔄 Kart Bazında OTD → MD → TA Geçiş Özeti")
+    PROCESS_MAP = {"F4":True,"GB":True,"GL":True,"GX":False,"LG":False,"MR":True,"V1":True,"XC":False,"XD":False,"XGB":True,"XGS":True,"XR":False,"Y3":True,"Y4":True}
+
+    trans_rows = []
+    for c in SUS_CARDS:
+        otd_t = sum(SUS_OTD_DAILY.get(c,[]))
+        md_t = sum(SUS_MD_DAILY.get(c,[]))
+        ta_t = sum(SUS_TA_DAILY.get(c,[]))
+        asm_t = sum(SUS_ASSEMBLY.get(c,[]))
+        si = SUS_INIT.get(c, {})
+        denge = ta_t + si.get("t", 0) - asm_t
+        trans_rows.append({
+            "Kart": c, "MD?": "Evet" if PROCESS_MAP.get(c) else "—",
+            "OTD Ürt.": otd_t, "OTD Stok₀": si.get("o",0),
+            "MD Ürt.": md_t if PROCESS_MAP.get(c) else 0,
+            "MD Stok₀": si.get("m",0) if PROCESS_MAP.get(c) else 0,
+            "TA Ürt.": ta_t, "TA Stok₀": si.get("t",0),
+            "Montaj": asm_t, "Denge": denge
+        })
+
+    df_trans = pd.DataFrame(trans_rows)
+    def style_denge(val):
+        if isinstance(val, (int, float)) and val < 0:
+            return "background:rgba(239,68,68,0.3);color:#ef4444;font-weight:700"
+        elif isinstance(val, (int, float)) and val > 500:
+            return "background:rgba(34,197,94,0.2);color:#22c55e;font-weight:600"
+        return ""
+    try:
+        styled_trans = df_trans.style.map(style_denge, subset=["Denge"]).format({
+            "OTD Ürt.": "{:,.0f}", "OTD Stok₀": "{:,.0f}", "MD Ürt.": "{:,.0f}",
+            "MD Stok₀": "{:,.0f}", "TA Ürt.": "{:,.0f}", "TA Stok₀": "{:,.0f}",
+            "Montaj": "{:,.0f}", "Denge": "{:,.0f}"})
+    except AttributeError:
+        styled_trans = df_trans.style.applymap(style_denge, subset=["Denge"]).format({
+            "OTD Ürt.": "{:,.0f}", "OTD Stok₀": "{:,.0f}", "MD Ürt.": "{:,.0f}",
+            "MD Stok₀": "{:,.0f}", "TA Ürt.": "{:,.0f}", "TA Stok₀": "{:,.0f}",
+            "Montaj": "{:,.0f}", "Denge": "{:,.0f}"})
+    st.dataframe(styled_trans, use_container_width=True, hide_index=True, height=540)
+
+    st.write("---")
+
+    # ── Kritik Notlar ──
+    st.subheader("⚠️ Kritik Bulgular")
+    notes = [
+        ("KRİTİK", "#ef4444", "XGS kartı OTD'de Gün 4'ten itibaren sürekli negatif stok — üretim-talep dengesizliği var."),
+        ("KRİTİK", "#ef4444", "XGB kartı MD'de Gün 1'den itibaren negatif — OTD çıkışı MD girişini karşılayamıyor."),
+        ("ORTA", "#f59e0b", "Y4 kartı MD'de Gün 1 ve Gün 5+ negatif — erken dönem TA talebi yüksek."),
+        ("ORTA", "#f59e0b", "LG kartı OTD'de kısa süreli negatifler var, TA'da ise dönem ortasında stok eriyor."),
+        ("DÜŞÜK", "#3b82f6", "V1 kartı TA'da Gün 1'den itibaren −9 — başlangıç stoğu montaj talebini karşılamıyor."),
+    ]
+    for sev, clr, txt in notes:
+        st.markdown(f"""<div style="display:flex;gap:10px;padding:10px 0;border-bottom:1px solid rgba(255,255,255,0.05);align-items:flex-start;">
+            <span style="background:{clr};color:#fff;padding:2px 10px;border-radius:6px;font-size:0.7rem;font-weight:700;white-space:nowrap;margin-top:2px;">{sev}</span>
+            <span style="color:#cbd5e1;font-size:0.88rem;line-height:1.5;">{txt}</span>
+        </div>""", unsafe_allow_html=True)
+
+
+# =============  TAB 6: VERİ YÖNETİMİ  ================================
 with tab_veri:
     st.subheader("⚙️ Veri Yönetimi")
     st.caption("Sisteme yeni veri yüklemek veya mevcut verileri güncellemek için bu bölümü kullanın.")
