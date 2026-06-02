@@ -303,8 +303,22 @@ st.markdown(f"""<style>
     @keyframes fadeSlideIn{{from{{opacity:0;transform:translateY(12px);}}to{{opacity:1;transform:translateY(0);}}}}
     .block-container{{max-width:1300px;animation:fadeSlideIn 0.5s ease-out;}}
     .stTabs [data-baseweb="tab-panel"]{{animation:fadeSlideIn 0.35s ease-out;}}
-    section[data-testid="stSidebar"]{{background:rgba(0,12,40,0.88)!important;backdrop-filter:blur(14px);-webkit-backdrop-filter:blur(14px);}}
+    section[data-testid="stSidebar"]{{background:linear-gradient(180deg,rgba(0,20,65,0.96) 0%,rgba(0,10,40,0.98) 40%,rgba(2,15,50,0.96) 100%)!important;backdrop-filter:blur(14px);-webkit-backdrop-filter:blur(14px);border-right:1px solid rgba(147,197,253,0.08);}}
     section[data-testid="stSidebar"] .stSelectbox label,section[data-testid="stSidebar"] h2{{color:#fff!important;}}
+    /* ═══ v3.3: Sidebar branding ═══ */
+    section[data-testid="stSidebar"]::before{{content:'';position:absolute;top:0;left:0;right:0;height:180px;background:linear-gradient(135deg,rgba(37,99,235,0.15) 0%,rgba(6,182,212,0.08) 50%,transparent 100%);pointer-events:none;z-index:0;}}
+    section[data-testid="stSidebar"] [data-testid="stSidebarContent"]{{position:relative;z-index:1;}}
+    .sb-brand{{padding:20px 16px 12px;text-align:center;border-bottom:1px solid rgba(147,197,253,0.1);margin-bottom:16px;}}
+    .sb-brand img{{height:50px;margin-bottom:8px;filter:drop-shadow(0 2px 8px rgba(37,99,235,0.3));}}
+    .sb-brand-title{{font-size:0.68rem;color:rgba(147,197,253,0.7);letter-spacing:3px;text-transform:uppercase;font-weight:600;margin:0;}}
+    .sb-brand-sub{{font-size:0.58rem;color:rgba(147,197,253,0.4);letter-spacing:1.5px;margin:2px 0 0;}}
+    .sb-section{{margin:16px 0;padding:0 4px;}}
+    .sb-section-title{{font-size:0.72rem;color:rgba(147,197,253,0.6);text-transform:uppercase;letter-spacing:2px;font-weight:700;margin:0 0 10px 2px;}}
+    .sb-divider{{height:1px;background:linear-gradient(90deg,transparent 0%,rgba(147,197,253,0.15) 30%,rgba(147,197,253,0.15) 70%,transparent 100%);margin:18px 0;}}
+    .sb-stat{{display:flex;justify-content:space-between;align-items:center;padding:8px 12px;border-radius:8px;background:rgba(255,255,255,0.03);border:1px solid rgba(255,255,255,0.05);margin-bottom:6px;}}
+    .sb-stat-label{{font-size:0.72rem;color:#64748b;}}
+    .sb-stat-val{{font-size:0.85rem;font-weight:700;color:#93c5fd;}}
+    .sb-stat-bad{{color:#ef4444!important;}}
     div[data-testid="stMetric"]{{background:rgba(0,15,50,0.55);border:1px solid rgba(255,255,255,0.1);border-radius:12px;padding:16px;backdrop-filter:blur(12px);-webkit-backdrop-filter:blur(12px);}}
     div[data-testid="stMetric"] label{{color:#93c5fd!important;}}
     div[data-testid="stMetric"] div[data-testid="stMetricValue"]{{color:#fff!important;}}
@@ -611,20 +625,33 @@ st.markdown(f'<div style="display:flex;align-items:center;margin-bottom:4px;">{l
 st.write("---")
 
 # =====================================================================
-# SIDEBAR  (orijinal, değişmedi)
+# SIDEBAR  — v3.3 Beko Branded Design
 # =====================================================================
-st.sidebar.header("Filtre & Ayarlar")
+# ── Beko Brand Header ──
+_sb_logo = f'<img src="data:image/png;base64,{logo_b64}">' if logo_b64 else '<div style="font-size:1.8rem;font-weight:900;color:#fff;letter-spacing:2px;">BEKO</div>'
+st.sidebar.markdown(f"""<div class="sb-brand">
+    {_sb_logo}
+    <p class="sb-brand-title">Çerkezköy Elektronik</p>
+    <p class="sb-brand-sub">Şasi Üretim Planlama Sistemi</p>
+</div>""", unsafe_allow_html=True)
+
+# ── Kart Filtresi ──
+st.sidebar.markdown('<div class="sb-section"><p class="sb-section-title">🎯 Kart Filtresi</p></div>', unsafe_allow_html=True)
 kart_sec = ["Tümü"] + sorted(SUS_CARDS)
-secili = st.sidebar.selectbox("Kart:", kart_sec)
+secili = st.sidebar.selectbox("Kart:", kart_sec, label_visibility="collapsed")
 hl = None if secili == "Tümü" else secili
 if hl:
     r = KART_RENKLERI.get(hl,"#fff")
-    st.sidebar.markdown(f'<div style="background:{r};color:#1e293b;padding:8px 14px;border-radius:8px;font-weight:700;text-align:center;font-size:1.1rem;margin-top:6px;">{hl}</div>', unsafe_allow_html=True)
-    st.sidebar.caption("MD geçişi var" if PROCESS_MAP.get(hl) else "MD'yi atlar (OTD → TA)")
+    needs_md = PROCESS_MAP.get(hl, False)
+    md_text = "OTD → MD → TA" if needs_md else "OTD → TA (MD atlar)"
+    st.sidebar.markdown(f"""<div style="background:{r};color:#1e293b;padding:10px 14px;border-radius:10px;text-align:center;margin-top:6px;">
+        <div style="font-weight:800;font-size:1.2rem;">{hl}</div>
+        <div style="font-size:0.68rem;opacity:0.7;margin-top:2px;">{md_text}</div>
+    </div>""", unsafe_allow_html=True)
 
-# ═══ v3: Tarih Aralığı Filtresi ═══
-st.sidebar.write("---")
-st.sidebar.markdown("**📅 Tarih Aralığı**")
+# ── Tarih Aralığı ──
+st.sidebar.markdown('<div class="sb-divider"></div>', unsafe_allow_html=True)
+st.sidebar.markdown('<div class="sb-section"><p class="sb-section-title">📅 Tarih Aralığı</p></div>', unsafe_allow_html=True)
 _date_labels = [f"{SUS_DAYS[i]} {SUS_DATES[i]}" for i in range(14)]
 _d_start, _d_end = st.sidebar.select_slider(
     "Görüntülenecek tarih aralığı:",
@@ -636,7 +663,33 @@ _d_start, _d_end = st.sidebar.select_slider(
 st.session_state.date_start_idx = _d_start
 st.session_state.date_end_idx   = _d_end
 DATE_INDICES = list(range(_d_start, _d_end + 1))
-st.sidebar.caption(f"{len(DATE_INDICES)} gün görüntüleniyor: {SUS_DATES[_d_start]} — {SUS_DATES[_d_end]}")
+st.sidebar.caption(f"{len(DATE_INDICES)} gün · {SUS_DATES[_d_start]} — {SUS_DATES[_d_end]}")
+
+# ── Plan Durum Özeti ──
+st.sidebar.markdown('<div class="sb-divider"></div>', unsafe_allow_html=True)
+st.sidebar.markdown('<div class="sb-section"><p class="sb-section-title">📊 Plan Durumu</p></div>', unsafe_allow_html=True)
+_v_otd = sum(1 for c in SUS_CARDS for v in sus["otd_rem"].get(c,[]) if v<0)
+_v_md  = sum(1 for c in SUS_CARDS for v in sus["md_rem"].get(c,[]) if v<0)
+_v_ta  = sum(1 for c in SUS_CARDS for v in sus["ta_rem"].get(c,[]) if v<0)
+_v_all = _v_otd + _v_md + _v_ta
+_stat_cls = "sb-stat-val" if _v_all == 0 else "sb-stat-val sb-stat-bad"
+st.sidebar.markdown(f"""
+<div class="sb-stat"><span class="sb-stat-label">KSO İhlal</span><span class="{'sb-stat-val' if _v_otd==0 else 'sb-stat-val sb-stat-bad'}">{_v_otd if _v_otd else '✓'}</span></div>
+<div class="sb-stat"><span class="sb-stat-label">KSM İhlal</span><span class="{'sb-stat-val' if _v_md==0 else 'sb-stat-val sb-stat-bad'}">{_v_md if _v_md else '✓'}</span></div>
+<div class="sb-stat"><span class="sb-stat-label">KST İhlal</span><span class="{'sb-stat-val' if _v_ta==0 else 'sb-stat-val sb-stat-bad'}">{_v_ta if _v_ta else '✓'}</span></div>
+<div class="sb-stat" style="margin-top:8px;border:1px solid {'rgba(239,68,68,0.3)' if _v_all else 'rgba(34,197,94,0.3)'};background:{'rgba(239,68,68,0.06)' if _v_all else 'rgba(34,197,94,0.06)'};">
+    <span class="sb-stat-label" style="font-weight:600;">Toplam</span>
+    <span class="{_stat_cls}" style="font-size:1rem;">{'⚠️ ' + str(_v_all) + ' ihlal' if _v_all else '✅ Fizibil'}</span>
+</div>
+""", unsafe_allow_html=True)
+
+# ── Oturum Bilgisi ──
+if st.session_state.auth:
+    st.sidebar.markdown('<div class="sb-divider"></div>', unsafe_allow_html=True)
+    st.sidebar.markdown(f"""<div style="padding:8px 12px;border-radius:8px;background:rgba(34,197,94,0.08);border:1px solid rgba(34,197,94,0.2);">
+        <div style="font-size:0.68rem;color:#22c55e;font-weight:600;">🔓 Oturum Açık</div>
+        <div style="font-size:0.78rem;color:#93c5fd;margin-top:2px;">Sicil: {st.session_state.auth_sicil}</div>
+    </div>""", unsafe_allow_html=True)
 
 # =====================================================================
 # SEKMELER
