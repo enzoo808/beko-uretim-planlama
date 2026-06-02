@@ -285,7 +285,7 @@ for img_name in ["aaa.jpg","aaa.jpeg","aaa.png"]:
             f"}}"
             f".stApp::before{{"
             f"content:'';position:fixed;inset:0;z-index:0;pointer-events:none;"
-            f"background:radial-gradient(ellipse at 50% 40%,rgba(0,15,50,0.52) 0%,rgba(0,10,35,0.78) 70%,rgba(0,5,25,0.88) 100%);"
+            f"background:radial-gradient(ellipse at 50% 40%,rgba(0,12,45,0.38) 0%,rgba(0,8,30,0.62) 60%,rgba(0,5,25,0.80) 100%);"
             f"}}"
             f".stApp>*{{position:relative;z-index:1;}}"
         )
@@ -383,6 +383,73 @@ def compute_manual_impact(old_plan, new_plan):
                         impact["summary"]["unchanged"] += 1
                     impact["changes"].append(change)
     return impact
+
+# ═══ v3.2: Setup Değişikliği Algılama ═══
+SETUP_DEFAULT_RATE = 0.50  # Setup değişikliği = %50 verimlilik kaybı
+
+def detect_setup_changes(new_alloc, old_alloc, lines):
+    """Alokasyondaki setup değişikliklerini tespit eder.
+    Bir gün önceki kart ile o günkü kart farklıysa setup değişikliği var demektir."""
+    setups = []
+    for ln in lines:
+        new_row = new_alloc.get(ln, [""]*14)
+        old_row = old_alloc.get(ln, [""]*14)
+        if isinstance(new_row[0], list): new_row = new_row[0]
+        if isinstance(old_row[0], list): old_row = old_row[0]
+        for i in range(14):
+            new_card = new_row[i] if i < len(new_row) else ""
+            old_card = old_row[i] if i < len(old_row) else ""
+            if not new_card:
+                continue
+            # Önceki gün: aynı hattaki bir önceki günün kartı
+            prev_card = new_row[i-1] if i > 0 and (i-1) < len(new_row) else ""
+            # Setup = kart değişti ve hücre dolu
+            is_setup = prev_card != "" and prev_card != new_card
+            # Ayrıca: kullanıcı kartı değiştirdiyse (eski alokasyondan farklı)
+            is_user_change = new_card != old_card
+            if is_setup or (is_user_change and i == 0 and new_card != old_card):
+                setups.append({
+                    "line": ln, "day_idx": i, "day": i+1, "date": SUS_DATES[i],
+                    "prev_card": prev_card, "new_card": new_card,
+                    "old_card": old_card,
+                    "suggested_rate": SETUP_DEFAULT_RATE if is_setup else 1.0,
+                    "is_user_change": is_user_change,
+                    "reason": f"{prev_card}→{new_card} setup" if is_setup else "ilk gün / değişiklik"
+                })
+    return setups
+
+def make_alloc_rates_combined(alloc_dict, rates_dict, lines, d_idx=None):
+    """Alokasyon + oranlar birleşik HTML tablosu."""
+    idx = d_idx if d_idx is not None else list(range(14))
+    h = '<table class="otd-table"><thead><tr><th style="text-align:left;">Hat</th>'
+    for i in idx: h += f'<th>{SUS_DAYS[i]}<br><span style="font-size:0.58rem;opacity:0.7">{SUS_DATES[i]}</span></th>'
+    h += '</tr></thead><tbody>'
+    for ln in lines:
+        rows = alloc_dict.get(ln, [])
+        if not rows: continue
+        disp = rows if isinstance(rows[0], list) else [rows]
+        rates = rates_dict.get(ln, [1]*14) if rates_dict else [1]*14
+        for ri, row in enumerate(disp):
+            h += f'<tr><td class="otd-rh">{ln if ri==0 else ""}</td>'
+            for i in idx:
+                v = row[i] if i < len(row) else ""
+                if v:
+                    bg = KART_RENKLERI.get(v,"#666")
+                    rv = rates[i] if i < len(rates) else 1.0
+                    pct = int(rv * 100)
+                    if rv < 1.0:
+                        bar_w = max(10, pct)
+                        rate_html = (f'<div style="margin-top:2px;height:4px;border-radius:2px;background:rgba(0,0,0,0.15);">'
+                                     f'<div style="width:{bar_w}%;height:100%;border-radius:2px;background:{"#ef4444" if pct<60 else "#f59e0b"};"></div></div>'
+                                     f'<span class="rate-sub" style="color:rgba(0,0,0,0.7);font-weight:800;">%{pct}</span>')
+                    else:
+                        rate_html = ''
+                    h += f'<td style="background:{bg};color:#1e293b;font-weight:700;line-height:1.1;padding:5px 4px;">{v}{rate_html}</td>'
+                else:
+                    h += '<td class="otd-none">—</td>'
+            h += '</tr>'
+    h += '</tbody></table>'
+    return h
 def make_grid(card_data, init_key=None, d_idx=None):
     idx = d_idx if d_idx is not None else list(range(14))
     h = '<table class="otd-table"><thead><tr><th style="text-align:left;">Kart</th>'
@@ -713,11 +780,14 @@ with tab_panel:
             with _edit_tab:
                 st.markdown("""<div style="background:rgba(37,99,235,0.12);border:1px solid rgba(37,99,235,0.3);border-radius:10px;padding:12px 16px;margin-bottom:12px;">
                     <span style="color:#93c5fd;font-weight:700;">✏️ Manuel Alokasyon Düzenleme</span><br>
-                    <span style="color:#cbd5e1;font-size:0.82rem;">Aşağıdaki tabloda hücrelere tıklayarak kart ataması yapın veya değiştirin. Boş bırakmak için hücreyi temizleyin.<br>
+                    <span style="color:#cbd5e1;font-size:0.82rem;">Tablodaki hücrelere tıklayarak kart ataması yapın. Setup değişiklikleri otomatik algılanır ve oran önerilir.<br>
                     Geçerli kartlar: """ + ", ".join(SUS_CARDS) + """</span>
                 </div>""", unsafe_allow_html=True)
 
-                # Hat-kart uyum bilgisi
+                # ═══ Mevcut durum: birleşik alokasyon + oran tablosu ═══
+                with st.expander("📖 Mevcut Alokasyon & Oranlar (salt okunur)", expanded=False):
+                    st.markdown(make_alloc_rates_combined(sus["otd_alloc"], sus.get("otd_rates",{}), ["OD0","OD2","OD3","OD4","OD6"], d_idx=DATE_INDICES), unsafe_allow_html=True)
+
                 with st.expander("📖 Hat — Kart Uyumluluk Tablosu", expanded=False):
                     compat_rows = []
                     for ln in ["OD0","OD2","OD3","OD4","OD6"]:
@@ -726,21 +796,18 @@ with tab_panel:
                                             "Tempoları": " | ".join([f"{c}:{TEMPO[ln][c]}" for c in cards])})
                     st.dataframe(pd.DataFrame(compat_rows), use_container_width=True, hide_index=True)
 
-                # DataFrame oluştur — mevcut alokasyondan
+                # ═══ Tek editör: kart ataması ═══
+                st.markdown("**🎯 Kart Ataması** — hücreye tıklayın, listeden kart seçin:")
                 edit_data = {}
                 for ln in ["OD0","OD2","OD3","OD4","OD6"]:
                     row = sus["otd_alloc"].get(ln, [""]*14)
-                    if isinstance(row[0], list): row = row[0]  # flatten if nested
+                    if isinstance(row[0], list): row = row[0]
                     edit_data[ln] = {f"{SUS_DAYS[i]} {SUS_DATES[i]}": (row[i] if i < len(row) else "") for i in range(14)}
                 df_edit = pd.DataFrame(edit_data).T
                 df_edit.index.name = "Hat"
 
-                # Düzenlenebilir tablo
-                st.markdown("**🎯 Kart Ataması** — hücreye tıklayın ve listeden kart seçin:")
                 edited_df = st.data_editor(
-                    df_edit,
-                    use_container_width=True,
-                    num_rows="fixed",
+                    df_edit, use_container_width=True, num_rows="fixed",
                     key="otd_alloc_editor",
                     column_config={
                         col: st.column_config.SelectboxColumn(
@@ -749,65 +816,98 @@ with tab_panel:
                     }
                 )
 
-                # ═══ v3.1: Oran editörü — alokasyonla birleşik görünüm ═══
-                st.markdown("**📊 Verimlilik Oranları** — her hücrenin üretim oranı (0.0 – 1.0, varsayılan 1.0 = %100):")
-                st.caption("💡 Setup değişikliği olan günlerde oran < 1.0 olarak girin (ör: 0.5 = %50 verimlilik)")
-                rate_data = {}
-                for ln in ["OD0","OD2","OD3","OD4","OD6"]:
-                    rates = sus.get("otd_rates", {}).get(ln, [1]*14)
-                    rate_data[ln] = {f"{SUS_DAYS[i]} {SUS_DATES[i]}": rates[i] if i < len(rates) else 1.0 for i in range(14)}
-                df_rates = pd.DataFrame(rate_data).T
-                df_rates.index.name = "Hat"
-                edited_rates = st.data_editor(
-                    df_rates,
-                    use_container_width=True,
-                    num_rows="fixed",
-                    key="otd_rate_editor",
-                    column_config={
-                        col: st.column_config.NumberColumn(
-                            col, min_value=0.0, max_value=1.0, step=0.05, format="%.2f", width="small"
-                        ) for col in df_rates.columns
-                    }
-                )
-
-                # Uygula / Önizle butonları
+                # ═══ Önizle / Uygula butonları ═══
                 ec1, ec2, ec3 = st.columns([2, 2, 4])
                 with ec1:
-                    btn_preview = st.button("🔍 Etkiyi Önizle", type="secondary", use_container_width=True, key="btn_preview_alloc")
+                    btn_preview = st.button("🔍 Etkiyi Önizle", type="primary", use_container_width=True, key="btn_preview_alloc")
                 with ec2:
-                    btn_apply = st.button("✅ Alokasyonu Uygula", type="primary", use_container_width=True, key="btn_apply_alloc")
+                    btn_apply = st.button("✅ Alokasyonu Uygula", type="secondary", use_container_width=True, key="btn_apply_alloc")
 
                 if btn_preview or btn_apply:
-                    # edited_df → alloc dict'e dönüştür
-                    new_alloc = copy.deepcopy(sus["otd_alloc"])
-                    new_rates = copy.deepcopy(sus.get("otd_rates", {}))
+                    # ── 1. edited_df → alloc dict ──
+                    new_alloc = {}
                     for ln in ["OD0","OD2","OD3","OD4","OD6"]:
                         row_vals = []
-                        rate_vals = []
                         for i in range(14):
                             col_name = f"{SUS_DAYS[i]} {SUS_DATES[i]}"
                             cell = str(edited_df.loc[ln, col_name]).strip() if col_name in edited_df.columns else ""
                             row_vals.append(cell if cell in SUS_CARDS else "")
-                            rv = edited_rates.loc[ln, col_name] if col_name in edited_rates.columns else 1.0
-                            rate_vals.append(float(rv) if rv else 1.0)
                         new_alloc[ln] = row_vals
+
+                    # ── 2. Setup değişikliklerini algıla ──
+                    setups = detect_setup_changes(new_alloc, sus["otd_alloc"], ["OD0","OD2","OD3","OD4","OD6"])
+                    setup_count = len([s for s in setups if s["suggested_rate"] < 1.0])
+
+                    # ── 3. Oranları hesapla: setup varsa suggested_rate, yoksa mevcut ──
+                    new_rates = {}
+                    for ln in ["OD0","OD2","OD3","OD4","OD6"]:
+                        old_rates = sus.get("otd_rates", {}).get(ln, [1]*14)
+                        old_alloc_row = sus["otd_alloc"].get(ln, [""]*14)
+                        if isinstance(old_alloc_row[0], list): old_alloc_row = old_alloc_row[0]
+                        rate_vals = []
+                        for i in range(14):
+                            card_now = new_alloc[ln][i]
+                            card_before = old_alloc_row[i] if i < len(old_alloc_row) else ""
+                            # Kart aynıysa mevcut oranı koru
+                            if card_now == card_before:
+                                rate_vals.append(old_rates[i] if i < len(old_rates) else 1.0)
+                            elif not card_now:
+                                rate_vals.append(1.0)
+                            else:
+                                # Yeni kart — setup var mı kontrol et
+                                prev_card = new_alloc[ln][i-1] if i > 0 else ""
+                                if prev_card and prev_card != card_now:
+                                    rate_vals.append(SETUP_DEFAULT_RATE)
+                                else:
+                                    rate_vals.append(1.0)
                         new_rates[ln] = rate_vals
 
-                    # Alokasyondan günlük üretime dönüştür
-                    new_daily = alloc_to_daily(new_alloc, TEMPO, ["OD0","OD2","OD3","OD4","OD6"], new_rates)
+                    # ── 4. Setup varsa kullanıcıya sor ──
+                    if setup_count > 0:
+                        st.write("---")
+                        st.markdown(f"""<div style="background:rgba(245,158,11,0.12);border:1px solid rgba(245,158,11,0.3);border-radius:10px;padding:12px 16px;">
+                            <span style="color:#f59e0b;font-weight:700;">⚠️ {setup_count} Setup Değişikliği Tespit Edildi</span><br>
+                            <span style="color:#cbd5e1;font-size:0.82rem;">Kart değişikliği olan günlerde verimlilik oranı otomatik olarak %{int(SETUP_DEFAULT_RATE*100)} olarak ayarlandı. Aşağıdan her birini düzenleyebilirsiniz.</span>
+                        </div>""", unsafe_allow_html=True)
 
-                    # Yeni plan oluştur ve stokları hesapla
+                        for si, s in enumerate(setups):
+                            if s["suggested_rate"] >= 1.0:
+                                continue
+                            sc1, sc2, sc3 = st.columns([4, 2, 2])
+                            with sc1:
+                                st.markdown(
+                                    f'<div style="color:#cbd5e1;font-size:0.85rem;padding-top:6px;">'
+                                    f'🔄 <strong style="color:#f59e0b;">{s["line"]}</strong> Gün {s["day"]} ({s["date"]}): '
+                                    f'<span style="color:#ef4444;">{s["prev_card"]}</span> → <span style="color:#22c55e;">{s["new_card"]}</span>'
+                                    f'</div>', unsafe_allow_html=True)
+                            with sc2:
+                                adj_rate = st.number_input(
+                                    "Oran", value=s["suggested_rate"], min_value=0.0, max_value=1.0,
+                                    step=0.05, format="%.2f", key=f"setup_rate_{si}",
+                                    label_visibility="collapsed"
+                                )
+                                new_rates[s["line"]][s["day_idx"]] = adj_rate
+                            with sc3:
+                                pct = int(adj_rate * 100)
+                                bar_color = "#ef4444" if pct < 60 else "#f59e0b" if pct < 100 else "#22c55e"
+                                st.markdown(f'<div style="padding-top:8px;"><span style="color:{bar_color};font-weight:800;font-size:1rem;">%{pct}</span></div>', unsafe_allow_html=True)
+
+                    # ── 5. Birleşik önizleme tablosu ──
+                    st.markdown("**📊 Düzenlenmiş Alokasyon & Oranlar:**")
+                    st.markdown(make_alloc_rates_combined(new_alloc, new_rates, ["OD0","OD2","OD3","OD4","OD6"], d_idx=DATE_INDICES), unsafe_allow_html=True)
+
+                    # ── 6. Üretim & stok hesapla ──
+                    new_daily = alloc_to_daily(new_alloc, TEMPO, ["OD0","OD2","OD3","OD4","OD6"], new_rates)
                     preview_plan = copy.deepcopy(sus)
                     preview_plan["otd_alloc"] = new_alloc
                     preview_plan["otd_rates"] = new_rates
                     preview_plan["otd_daily"] = new_daily
                     preview_plan = recalc_stocks(preview_plan)
-
-                    # Etki hesapla
                     impact = compute_manual_impact(sus, preview_plan)
 
+                    # ── 7. DEĞİŞİKLİKLER (ilk gösterilen) ──
                     st.write("---")
-                    st.markdown("### 📊 Değişiklik Etki Analizi")
+                    st.markdown("### 🔍 Değişiklik Etki Analizi")
 
                     # KPI karşılaştırma
                     ic1, ic2, ic3, ic4 = st.columns(4)
@@ -817,41 +917,60 @@ with tab_panel:
                     new_total = sum(sum(v) for v in preview_plan["otd_daily"].values())
                     with ic1: st.metric("KSO İhlal (Önce)", f"{old_viol} gün×kart")
                     with ic2: st.metric("KSO İhlal (Sonra)", f"{new_viol} gün×kart", delta=f"{new_viol-old_viol:+d}", delta_color="inverse")
-                    with ic3: st.metric("Toplam OTD Üretim (Önce)", f"{old_total:,}")
-                    with ic4: st.metric("Toplam OTD Üretim (Sonra)", f"{new_total:,}", delta=f"{new_total-old_total:+,}")
+                    with ic3: st.metric("OTD Üretim (Önce)", f"{old_total:,}")
+                    with ic4: st.metric("OTD Üretim (Sonra)", f"{new_total:,}", delta=f"{new_total-old_total:+,}")
 
-                    # Detaylı değişiklikler
                     if impact["changes"]:
                         st.markdown("**📋 Stok Değişimleri:**")
                         changes_df = pd.DataFrame(impact["changes"])
                         changes_df = changes_df.rename(columns={"card":"Kart","stage":"Aşama","day":"Gün","date":"Tarih","old":"Önce","new":"Sonra","diff":"Fark","status":"Durum"})
                         changes_df["Durum"] = changes_df["Durum"].map({"fixed":"✅ Çözüldü","new_violation":"❌ Yeni İhlal","changed":"🔄 Değişti"})
                         st.dataframe(changes_df[["Kart","Aşama","Gün","Tarih","Önce","Sonra","Fark","Durum"]], use_container_width=True, hide_index=True, height=min(400, 40+35*len(changes_df)))
-
-                        # Özet
                         s = impact["summary"]
                         st.markdown(
-                            f'<div style="background:rgba(255,255,255,0.05);border-radius:10px;padding:12px;margin-top:8px;">'
+                            f'<div style="background:rgba(0,15,50,0.5);border-radius:10px;padding:12px;margin-top:8px;backdrop-filter:blur(6px);">'
                             f'<span style="color:#22c55e;font-weight:700;">✅ {s["fixed"]} ihlal çözüldü</span> &nbsp;|&nbsp; '
                             f'<span style="color:#ef4444;font-weight:700;">❌ {s["new_violations"]} yeni ihlal</span> &nbsp;|&nbsp; '
                             f'<span style="color:#93c5fd;">{s["unchanged"]} stok değeri değişti</span></div>',
                             unsafe_allow_html=True
                         )
 
-                    # Önizle: alokasyon + stok tabloları
-                    st.markdown("**🔄 Yeni Alokasyon:**")
-                    st.markdown(make_alloc_compare(new_alloc, sus["otd_alloc"], ["OD0","OD2","OD3","OD4","OD6"], d_idx=DATE_INDICES, rates_dict=new_rates), unsafe_allow_html=True)
-                    st.markdown("**Yeni Günlük Üretim:**")
-                    st.markdown(make_grid_plan(new_daily, sus["otd_daily"], d_idx=DATE_INDICES), unsafe_allow_html=True)
-                    st.markdown("**📦 Yeni Kalan Stok — KSO:**")
-                    st.markdown(make_grid_plan(preview_plan["otd_rem"], sus["otd_rem"], "o", d_idx=DATE_INDICES), unsafe_allow_html=True)
+                    # ── 8. Detay tabloları (expander) ──
+                    with st.expander("📈 Detaylı Tablolar (Üretim & Stok)", expanded=False):
+                        st.markdown("**Yeni Günlük Üretim:**")
+                        st.markdown(make_grid_plan(new_daily, sus["otd_daily"], d_idx=DATE_INDICES), unsafe_allow_html=True)
+                        st.markdown("**📦 Yeni Kalan Stok — KSO:**")
+                        st.markdown(make_grid_plan(preview_plan["otd_rem"], sus["otd_rem"], "o", d_idx=DATE_INDICES), unsafe_allow_html=True)
 
+                    # ── 9. Uygula — SİCİL DOĞRULAMASI GEREKLİ ──
                     if btn_apply:
-                        st.session_state.sus = preview_plan
-                        st.session_state.otd_opt_res = None
-                        st.session_state.manual_impact = impact
-                        st.success("✅ Manuel alokasyon uygulandı, stoklar yeniden hesaplandı!")
-                        st.rerun()
+                        st.write("---")
+                        if st.session_state.auth:
+                            st.session_state.sus = preview_plan
+                            st.session_state.otd_opt_res = None
+                            st.session_state.manual_impact = impact
+                            st.success(f"✅ Manuel alokasyon uygulandı! (Sicil: {st.session_state.auth_sicil})")
+                            st.rerun()
+                        else:
+                            st.markdown("""<div style="background:rgba(239,68,68,0.12);border:1px solid rgba(239,68,68,0.3);border-radius:10px;padding:12px 16px;">
+                                <span style="color:#ef4444;font-weight:700;">🔒 Değişiklik Uygulama — Yetkilendirme Gerekli</span><br>
+                                <span style="color:#cbd5e1;font-size:0.82rem;">Sisteme değişiklik uygulamak için sicil numaranızı girin.</span>
+                            </div>""", unsafe_allow_html=True)
+                            ap1, ap2 = st.columns([3, 1])
+                            with ap1:
+                                apply_sicil = st.text_input("Sicil No:", type="password", placeholder="Sicil numaranız", key="apply_sicil_input", label_visibility="collapsed")
+                            with ap2:
+                                if st.button("🔓 Doğrula & Uygula", type="primary", use_container_width=True, key="apply_sicil_btn"):
+                                    if apply_sicil.strip() in YETKILI_SICILLER:
+                                        st.session_state.auth = True
+                                        st.session_state.auth_sicil = apply_sicil.strip()
+                                        st.session_state.sus = preview_plan
+                                        st.session_state.otd_opt_res = None
+                                        st.session_state.manual_impact = impact
+                                        st.success(f"✅ Yetkilendirildi ve uygulandı! (Sicil: {apply_sicil.strip()})")
+                                        st.rerun()
+                                    else:
+                                        st.error("❌ Yetkisiz sicil numarası.")
 
         else:
             # Optimizasyon sonucu mevcut — iç sekmeler: Referans | Optimize
