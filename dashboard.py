@@ -344,7 +344,7 @@ for img_name in ["aaa.jpg","aaa.jpeg","aaa.png"]:
             f"}}"
             f".stApp::before{{"
             f"content:'';position:fixed;inset:0;z-index:0;pointer-events:none;"
-            f"background:radial-gradient(ellipse at 50% 40%,rgba(0,10,40,0.30) 0%,rgba(0,8,30,0.55) 60%,rgba(0,5,25,0.75) 100%);"
+            f"background:radial-gradient(ellipse at 50% 40%,rgba(0,8,30,0.18) 0%,rgba(0,5,22,0.42) 60%,rgba(0,3,18,0.65) 100%);"
             f"}}"
             f".stApp>*{{position:relative;z-index:1;}}"
         )
@@ -357,39 +357,68 @@ for ln in ["pngwing.com.png","pngwing_com.png","logo.png"]:
 
 st.markdown(f"""<style>
     {bg_css}
-    footer{{visibility:hidden!important;}}
-    header[data-testid="stHeader"]{{background:rgba(0,15,45,0.82)!important;backdrop-filter:blur(16px);-webkit-backdrop-filter:blur(16px);}}
+    footer{{visibility:hidden!important;display:none!important;}}
+    /* ═══ v3.6: Streamlit varsayılan UI elementlerini gizle ═══ */
+    [data-testid="stToolbar"]{{display:none!important;}}
+    [data-testid="stDeployButton"]{{display:none!important;}}
+    [data-testid="stMainMenu"]{{display:none!important;}}
+    [data-testid="stStatusWidget"]{{display:none!important;}}
+    [data-testid="stDecoration"]{{display:none!important;}}
+    [data-testid="stHeaderActionElements"]{{display:none!important;}}
+    #MainMenu{{visibility:hidden!important;display:none!important;}}
+    .viewerBadge_container__1QSob, .viewerBadge_link__qRIco, .styles_viewerBadge__CvC9N{{display:none!important;}}
+    [class*="viewerBadge"]{{display:none!important;}}
+    a[href*="streamlit.io"]{{display:none!important;}}
+    iframe[title*="Streamlit"]{{display:none!important;}}
+    header[data-testid="stHeader"]{{background:rgba(0,15,45,0.82)!important;backdrop-filter:blur(16px);-webkit-backdrop-filter:blur(16px);height:0!important;min-height:0!important;}}
     @keyframes fadeSlideIn{{from{{opacity:0;transform:translateY(12px);}}to{{opacity:1;transform:translateY(0);}}}}
     .block-container{{max-width:1300px;animation:fadeSlideIn 0.5s ease-out;}}
     .stTabs [data-baseweb="tab-panel"]{{animation:fadeSlideIn 0.35s ease-out;}}
     section[data-testid="stSidebar"]{{
         background:
-            linear-gradient(180deg,rgba(0,20,65,0.94) 0%,rgba(0,10,40,0.97) 40%,rgba(2,15,50,0.94) 100%),
-            repeating-linear-gradient(0deg,transparent,transparent 60px,rgba(37,99,235,0.03) 60px,rgba(37,99,235,0.03) 61px),
-            repeating-linear-gradient(90deg,transparent,transparent 60px,rgba(37,99,235,0.03) 60px,rgba(37,99,235,0.03) 61px),
-            radial-gradient(ellipse at 20% 80%,rgba(6,182,212,0.06) 0%,transparent 50%),
-            radial-gradient(ellipse at 80% 20%,rgba(37,99,235,0.08) 0%,transparent 40%)
+            linear-gradient(180deg,#020a1f 0%,#04122e 50%,#020a1f 100%)
         !important;
-        backdrop-filter:blur(14px);-webkit-backdrop-filter:blur(14px);
-        border-right:1px solid rgba(147,197,253,0.08);
+        border-right:1px solid rgba(147,197,253,0.10);
+        position:relative;
+    }}
+    /* Sidebar scroll fix — Streamlit'in iç container'larını hedefle */
+    section[data-testid="stSidebar"] > div,
+    section[data-testid="stSidebar"] > div > div,
+    section[data-testid="stSidebar"] [data-testid="stSidebarContent"],
+    section[data-testid="stSidebar"] [data-testid="stSidebarUserContent"]{{
         overflow-y:auto!important;
+        max-height:100vh!important;
+        height:auto!important;
+    }}
+    /* Scrollbar stili — Beko mavisi */
+    section[data-testid="stSidebar"] ::-webkit-scrollbar{{width:6px;}}
+    section[data-testid="stSidebar"] ::-webkit-scrollbar-track{{background:rgba(255,255,255,0.02);}}
+    section[data-testid="stSidebar"] ::-webkit-scrollbar-thumb{{background:rgba(37,99,235,0.4);border-radius:3px;}}
+    section[data-testid="stSidebar"] ::-webkit-scrollbar-thumb:hover{{background:rgba(37,99,235,0.7);}}
+    /* Sidebar dekoratif accent — premium minimal */
+    section[data-testid="stSidebar"]::after{{
+        content:'';position:absolute;top:0;right:0;bottom:0;width:1px;
+        background:linear-gradient(180deg,transparent 0%,rgba(37,99,235,0.4) 30%,rgba(6,182,212,0.3) 70%,transparent 100%);
+        pointer-events:none;
     }}
     section[data-testid="stSidebar"] .stSelectbox label,section[data-testid="stSidebar"] h2{{color:#fff!important;}}
-    section[data-testid="stSidebar"] [data-testid="stSidebarContent"]{{overflow-y:auto!important;}}
-    /* ═══ v3.3: Sidebar branding ═══ */
-    .sb-glow{{position:sticky;top:0;height:0;overflow:visible;z-index:0;pointer-events:none;}}
-    .sb-glow::after{{content:'';display:block;width:100%;height:180px;background:linear-gradient(135deg,rgba(37,99,235,0.15) 0%,rgba(6,182,212,0.08) 50%,transparent 100%);}}
-    .sb-brand{{padding:20px 16px 12px;text-align:center;border-bottom:1px solid rgba(147,197,253,0.1);margin-bottom:16px;}}
-    .sb-brand img{{height:50px;margin-bottom:8px;filter:drop-shadow(0 2px 8px rgba(37,99,235,0.3));}}
-    .sb-brand-title{{font-size:0.68rem;color:rgba(147,197,253,0.7);letter-spacing:3px;text-transform:uppercase;font-weight:600;margin:0;}}
-    .sb-brand-sub{{font-size:0.58rem;color:rgba(147,197,253,0.4);letter-spacing:1.5px;margin:2px 0 0;}}
-    .sb-section{{margin:16px 0;padding:0 4px;}}
-    .sb-section-title{{font-size:0.72rem;color:rgba(147,197,253,0.6);text-transform:uppercase;letter-spacing:2px;font-weight:700;margin:0 0 10px 2px;}}
-    .sb-divider{{height:1px;background:linear-gradient(90deg,transparent 0%,rgba(147,197,253,0.15) 30%,rgba(147,197,253,0.15) 70%,transparent 100%);margin:18px 0;}}
-    .sb-stat{{display:flex;justify-content:space-between;align-items:center;padding:8px 12px;border-radius:8px;background:rgba(255,255,255,0.03);border:1px solid rgba(255,255,255,0.05);margin-bottom:6px;}}
-    .sb-stat-label{{font-size:0.72rem;color:#64748b;}}
-    .sb-stat-val{{font-size:0.85rem;font-weight:700;color:#93c5fd;}}
-    .sb-stat-bad{{color:#ef4444!important;}}
+    /* ═══ v3.6: Sidebar branding — premium minimal ═══ */
+    .sb-glow{{display:none;}}
+    .sb-top-accent{{height:80px;margin:-1rem -1rem 12px;background:radial-gradient(ellipse at 50% 0%,rgba(37,99,235,0.18) 0%,rgba(6,182,212,0.08) 40%,transparent 75%);position:relative;pointer-events:none;}}
+    .sb-brand{{padding:0 12px 16px;text-align:center;border-bottom:1px solid rgba(147,197,253,0.08);margin-bottom:18px;position:relative;}}
+    .sb-brand::after{{content:'';position:absolute;bottom:-1px;left:30%;right:30%;height:1px;background:linear-gradient(90deg,transparent,rgba(37,99,235,0.5),transparent);}}
+    .sb-brand img{{height:54px;margin-bottom:10px;filter:drop-shadow(0 4px 12px rgba(37,99,235,0.35));}}
+    .sb-brand-title{{font-size:0.7rem;color:rgba(255,255,255,0.85);letter-spacing:4px;text-transform:uppercase;font-weight:700;margin:0;}}
+    .sb-brand-sub{{font-size:0.6rem;color:rgba(147,197,253,0.5);letter-spacing:2px;margin:4px 0 0;text-transform:uppercase;}}
+    .sb-section{{margin:14px 0 8px;padding:0 2px;}}
+    .sb-section-title{{font-size:0.68rem;color:rgba(147,197,253,0.55);text-transform:uppercase;letter-spacing:2.5px;font-weight:700;margin:0 0 10px 2px;display:flex;align-items:center;gap:6px;}}
+    .sb-section-title::after{{content:'';flex:1;height:1px;background:linear-gradient(90deg,rgba(147,197,253,0.15) 0%,transparent 100%);margin-left:6px;}}
+    .sb-divider{{height:1px;background:linear-gradient(90deg,transparent 0%,rgba(147,197,253,0.12) 30%,rgba(147,197,253,0.12) 70%,transparent 100%);margin:20px 0 14px;}}
+    .sb-stat{{display:flex;justify-content:space-between;align-items:center;padding:9px 12px;border-radius:8px;background:rgba(255,255,255,0.025);border:1px solid rgba(255,255,255,0.04);margin-bottom:5px;transition:all 0.2s ease;}}
+    .sb-stat:hover{{background:rgba(255,255,255,0.05);border-color:rgba(147,197,253,0.15);}}
+    .sb-stat-label{{font-size:0.72rem;color:#94a3b8;font-weight:500;letter-spacing:0.5px;}}
+    .sb-stat-val{{font-size:0.88rem;font-weight:800;color:#93c5fd;}}
+    .sb-stat-bad{{color:#f87171!important;}}
     div[data-testid="stMetric"]{{background:rgba(0,15,50,0.55);border:1px solid rgba(255,255,255,0.1);border-radius:12px;padding:16px;backdrop-filter:blur(12px);-webkit-backdrop-filter:blur(12px);}}
     div[data-testid="stMetric"] label{{color:#93c5fd!important;}}
     div[data-testid="stMetric"] div[data-testid="stMetricValue"]{{color:#fff!important;}}
@@ -701,7 +730,7 @@ st.write("---")
 # =====================================================================
 # ── Beko Brand Header ──
 _sb_logo = f'<img src="data:image/png;base64,{logo_b64}">' if logo_b64 else '<div style="font-size:1.8rem;font-weight:900;color:#fff;letter-spacing:2px;">BEKO</div>'
-st.sidebar.markdown('<div class="sb-glow"></div>', unsafe_allow_html=True)
+st.sidebar.markdown('<div class="sb-top-accent"></div>', unsafe_allow_html=True)
 st.sidebar.markdown(f"""<div class="sb-brand">
     {_sb_logo}
     <p class="sb-brand-title">Çerkezköy Elektronik</p>
