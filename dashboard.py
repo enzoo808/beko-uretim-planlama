@@ -7,7 +7,13 @@ import plotly.graph_objects as go
 # =====================================================================
 # SAYFA YAPILANDIRMASI
 # =====================================================================
-st.set_page_config(page_title="Beko Çerkezköy — Şasi Montaj Planlaması", page_icon="📺", layout="wide")
+_page_icon = "pngwing.com.png" if os.path.exists("pngwing.com.png") else "📺"
+st.set_page_config(
+    page_title="Beko Şasi Planlama",
+    page_icon=_page_icon,
+    layout="wide",
+    initial_sidebar_state="collapsed"
+)
 
 # =====================================================================
 # SABİTLER
@@ -359,18 +365,22 @@ st.markdown(f"""<style>
     {bg_css}
     footer{{visibility:hidden!important;display:none!important;}}
     /* ═══ v3.6: Streamlit varsayılan UI elementlerini gizle ═══ */
-    [data-testid="stToolbar"]{{display:none!important;}}
+    /* Sadece spesifik butonları gizle — sidebar toggle açık kalsın */
     [data-testid="stDeployButton"]{{display:none!important;}}
     [data-testid="stMainMenu"]{{display:none!important;}}
     [data-testid="stStatusWidget"]{{display:none!important;}}
     [data-testid="stDecoration"]{{display:none!important;}}
-    [data-testid="stHeaderActionElements"]{{display:none!important;}}
+    [data-testid="stHeaderActionElements"] > div:not(:has([data-testid="stSidebarCollapsedControl"])){{display:none!important;}}
     #MainMenu{{visibility:hidden!important;display:none!important;}}
     .viewerBadge_container__1QSob, .viewerBadge_link__qRIco, .styles_viewerBadge__CvC9N{{display:none!important;}}
     [class*="viewerBadge"]{{display:none!important;}}
     a[href*="streamlit.io"]{{display:none!important;}}
     iframe[title*="Streamlit"]{{display:none!important;}}
-    header[data-testid="stHeader"]{{background:rgba(0,15,45,0.82)!important;backdrop-filter:blur(16px);-webkit-backdrop-filter:blur(16px);height:0!important;min-height:0!important;}}
+    /* Sidebar açma butonunu mutlaka göster */
+    [data-testid="stSidebarCollapsedControl"],
+    [data-testid="collapsedControl"],
+    button[kind="header"]{{display:flex!important;visibility:visible!important;opacity:1!important;}}
+    header[data-testid="stHeader"]{{background:rgba(0,15,45,0.4)!important;backdrop-filter:blur(16px);-webkit-backdrop-filter:blur(16px);height:auto!important;}}
     @keyframes fadeSlideIn{{from{{opacity:0;transform:translateY(12px);}}to{{opacity:1;transform:translateY(0);}}}}
     .block-container{{max-width:1300px;animation:fadeSlideIn 0.5s ease-out;}}
     .stTabs [data-baseweb="tab-panel"]{{animation:fadeSlideIn 0.35s ease-out;}}
@@ -451,7 +461,52 @@ st.markdown(f"""<style>
     .impact-fixed{{border-left:4px solid #22c55e;}} .impact-new-viol{{border-left:4px solid #ef4444;}}
     [data-testid="stDataEditor"]{{border-radius:10px;overflow:hidden;}}
     [data-testid="stDataEditor"] td{{font-weight:600!important;}}
+
+    /* ═══ v3.7: Splash Screen — Beko logo açılış animasyonu ═══ */
+    @keyframes splashFade{{
+        0%{{opacity:1;visibility:visible;}}
+        80%{{opacity:1;visibility:visible;}}
+        100%{{opacity:0;visibility:hidden;}}
+    }}
+    @keyframes splashLogo{{
+        0%{{opacity:0;transform:scale(0.7) translateY(20px);}}
+        40%{{opacity:1;transform:scale(1.05) translateY(0);}}
+        60%{{opacity:1;transform:scale(1) translateY(0);}}
+        100%{{opacity:0;transform:scale(0.95) translateY(-10px);}}
+    }}
+    @keyframes splashRing{{
+        0%{{opacity:0;transform:scale(0.5) rotate(0deg);border-width:3px;}}
+        50%{{opacity:0.4;transform:scale(1.2) rotate(180deg);border-width:1px;}}
+        100%{{opacity:0;transform:scale(1.8) rotate(360deg);border-width:0px;}}
+    }}
+    @keyframes splashSubtitle{{
+        0%{{opacity:0;transform:translateY(8px);letter-spacing:8px;}}
+        50%{{opacity:1;transform:translateY(0);letter-spacing:6px;}}
+        100%{{opacity:0;transform:translateY(-4px);letter-spacing:5px;}}
+    }}
+    .beko-splash{{
+        position:fixed;inset:0;z-index:99999;
+        background:radial-gradient(ellipse at center,#04122e 0%,#020817 100%);
+        display:flex;flex-direction:column;align-items:center;justify-content:center;
+        animation:splashFade 2.4s ease-in-out forwards;
+        pointer-events:none;
+    }}
+    .beko-splash-logo{{height:120px;animation:splashLogo 2.4s cubic-bezier(0.16,1,0.3,1) forwards;filter:drop-shadow(0 8px 32px rgba(37,99,235,0.5));}}
+    .beko-splash-ring{{position:absolute;width:200px;height:200px;border:2px solid rgba(37,99,235,0.6);border-radius:50%;animation:splashRing 2.4s ease-out forwards;}}
+    .beko-splash-ring:nth-child(2){{animation-delay:0.2s;border-color:rgba(6,182,212,0.4);}}
+    .beko-splash-subtitle{{margin-top:24px;color:rgba(147,197,253,0.9);font-size:0.85rem;letter-spacing:6px;text-transform:uppercase;font-weight:600;animation:splashSubtitle 2.4s ease-in-out forwards;animation-delay:0.3s;opacity:0;}}
 </style>""", unsafe_allow_html=True)
+
+# ═══ v3.7: Splash ekranı (sayfa açılışında bir kez) ═══
+if "splash_shown" not in st.session_state:
+    st.session_state.splash_shown = True
+    _splash_logo = f'<img src="data:image/png;base64,{logo_b64}" class="beko-splash-logo">' if logo_b64 else '<div style="font-size:5rem;font-weight:900;color:#fff;letter-spacing:6px;animation:splashLogo 2.4s cubic-bezier(0.16,1,0.3,1) forwards;">BEKO</div>'
+    st.markdown(f"""<div class="beko-splash">
+        <div class="beko-splash-ring"></div>
+        <div class="beko-splash-ring"></div>
+        {_splash_logo}
+        <div class="beko-splash-subtitle">Çerkezköy · Şasi Planlama</div>
+    </div>""", unsafe_allow_html=True)
 
 # =====================================================================
 # TABLO FONKSİYONLARI  (orijinal, değişmedi)
@@ -718,12 +773,8 @@ def make_rates_table(rates_dict, alloc_dict, lines, d_idx=None):
     return h
 
 # =====================================================================
-# LOGO & BAŞLIK  (orijinal, değişmedi)
+# LOGO & BAŞLIK — Yeni yapı: sekmeler önce, marka şeridi sonra (aşağıda)
 # =====================================================================
-lh = f'<img src="data:image/png;base64,{logo_b64}" style="height:55px;margin-right:14px;vertical-align:middle;">' if logo_b64 else ""
-st.markdown(f'<div style="display:flex;align-items:center;margin-bottom:4px;">{lh}<div>'
-            f'<h1 style="color:#fff;margin:0;font-size:1.4rem;font-weight:700;">Çerkezköy Elektronik — Şasi ➜ Montaj Planlaması</h1></div></div>', unsafe_allow_html=True)
-st.write("---")
 
 # =====================================================================
 # SIDEBAR  — v3.3 Beko Branded Design
@@ -811,11 +862,21 @@ if st.session_state.auth:
     </div>""", unsafe_allow_html=True)
 
 # =====================================================================
-# SEKMELER
+# SEKMELER (sayfa başına taşındı, emojiler kaldırıldı)
 # =====================================================================
 tab_panel, tab_opt, tab_rapor, tab_veri = st.tabs(
-    ["📊 Kontrol Paneli & Üretim Planı", "🚀 Optimize Et", "📑 Rapor & Geçişler", "⚙️ Veri Yönetimi"]
+    ["Kontrol Paneli & Üretim Planı", "Optimize Et", "Rapor & Geçişler", "Veri Yönetimi"]
 )
+
+# ── Üst marka şeridi (sekmelerden sonra, ince) ──
+_lh = f'<img src="data:image/png;base64,{logo_b64}" style="height:38px;margin-right:12px;filter:drop-shadow(0 2px 6px rgba(37,99,235,0.4));">' if logo_b64 else ""
+st.markdown(f"""<div style="display:flex;align-items:center;justify-content:flex-end;margin:8px 0 14px;padding:6px 14px;background:rgba(0,15,50,0.35);border-radius:10px;backdrop-filter:blur(8px);border:1px solid rgba(147,197,253,0.08);">
+    <div style="text-align:right;">
+        <div style="color:#fff;font-size:0.95rem;font-weight:700;letter-spacing:0.5px;">Çerkezköy Elektronik</div>
+        <div style="color:#93c5fd;font-size:0.7rem;letter-spacing:2px;text-transform:uppercase;font-weight:500;">Şasi → Montaj Planlama Sistemi</div>
+    </div>
+    {_lh.replace("margin-right:12px","margin-left:14px;margin-right:0")}
+</div>""", unsafe_allow_html=True)
 
 
 # =============  TAB 1: KONTROL PANELİ + ÜRETİM PLANI  =================
