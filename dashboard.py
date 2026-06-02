@@ -71,6 +71,13 @@ if "ta_opt_res"  not in st.session_state: st.session_state.ta_opt_res  = None
 for _k in ("last_otd_up", "last_md_up", "last_ta_up"):
     if _k not in st.session_state: st.session_state[_k] = None
 
+# ═══ v3 EKLENTİLERİ — Tarih Aralığı & Manuel Düzenleme ═══
+if "date_start_idx" not in st.session_state: st.session_state.date_start_idx = 0
+if "date_end_idx"   not in st.session_state: st.session_state.date_end_idx   = 13
+if "manual_edit_alloc" not in st.session_state: st.session_state.manual_edit_alloc = None
+if "manual_edit_before" not in st.session_state: st.session_state.manual_edit_before = None
+if "manual_impact" not in st.session_state: st.session_state.manual_impact = None
+
 sus = st.session_state.sus
 
 # =====================================================================
@@ -309,17 +316,65 @@ st.markdown(f"""<style>
     .rozet-ref{{background:rgba(147,197,253,0.15);color:#93c5fd;padding:4px 12px;border-radius:16px;font-size:0.8rem;font-weight:600;border:1px solid rgba(147,197,253,0.3);}}
     .rozet-opt{{background:rgba(34,197,94,0.15);color:#22c55e;padding:4px 12px;border-radius:16px;font-size:0.8rem;font-weight:600;border:1px solid rgba(34,197,94,0.3);}}
     .rozet-partial{{background:rgba(245,158,11,0.15);color:#f59e0b;padding:4px 12px;border-radius:16px;font-size:0.8rem;font-weight:600;border:1px solid rgba(245,158,11,0.3);}}
+
+    /* ═══ v3: Manuel düzenleme stiller ═══ */
+    .impact-box{{background:rgba(255,255,255,0.05);border:1px solid rgba(255,255,255,0.1);border-radius:12px;padding:16px;margin:8px 0;}}
+    .impact-fixed{{border-left:4px solid #22c55e;}} .impact-new-viol{{border-left:4px solid #ef4444;}}
+    [data-testid="stDataEditor"]{{border-radius:10px;overflow:hidden;}}
+    [data-testid="stDataEditor"] td{{font-weight:600!important;}}
 </style>""", unsafe_allow_html=True)
 
 # =====================================================================
 # TABLO FONKSİYONLARI  (orijinal, değişmedi)
 # =====================================================================
-def make_grid(card_data, init_key=None):
+
+# ═══ v3: Alokasyondan günlük üretime dönüşüm ═══
+def alloc_to_daily(alloc_dict, tempo_dict, lines, rates_dict=None):
+    """OTD alokasyonunu günlük üretim miktarlarına dönüştürür."""
+    daily = {c: [0]*14 for c in SUS_CARDS}
+    for ln in lines:
+        row_data = alloc_dict.get(ln, [""]*14)
+        rows = row_data if (row_data and isinstance(row_data[0], list)) else [row_data]
+        rates = rates_dict.get(ln, [1]*14) if rates_dict else [1]*14
+        for row in rows:
+            for i, card in enumerate(row):
+                if i < 14 and card and card in SUS_CARDS:
+                    cap = tempo_dict.get(ln, {}).get(card, 0)
+                    rate = rates[i] if i < len(rates) else 1
+                    daily[card][i] += int(cap * rate)
+    return daily
+
+def compute_manual_impact(old_plan, new_plan):
+    """Manuel değişikliklerin etkisini hesaplar."""
+    impact = {"changes": [], "summary": {"fixed": 0, "new_violations": 0, "unchanged": 0}}
+    for stage, rem_key, label in [("OTD","otd_rem","KSO"),("MD","md_rem","KSM"),("TA","ta_rem","KST")]:
+        for c in SUS_CARDS:
+            if rem_key == "md_rem" and not PROCESS_MAP.get(c): continue
+            old_rem = old_plan[rem_key].get(c, [0]*14)
+            new_rem = new_plan[rem_key].get(c, [0]*14)
+            for i in range(14):
+                ov, nv = old_rem[i], new_rem[i]
+                if ov != nv:
+                    change = {"card": c, "stage": label, "day": i+1, "date": SUS_DATES[i],
+                              "old": ov, "new": nv, "diff": nv - ov}
+                    if ov < 0 and nv >= 0:
+                        change["status"] = "fixed"
+                        impact["summary"]["fixed"] += 1
+                    elif ov >= 0 and nv < 0:
+                        change["status"] = "new_violation"
+                        impact["summary"]["new_violations"] += 1
+                    else:
+                        change["status"] = "changed"
+                        impact["summary"]["unchanged"] += 1
+                    impact["changes"].append(change)
+    return impact
+def make_grid(card_data, init_key=None, d_idx=None):
+    idx = d_idx if d_idx is not None else list(range(14))
     h = '<table class="otd-table"><thead><tr><th style="text-align:left;">Kart</th>'
     if init_key: h += '<th>Stok₀</th>'
-    for i in range(14): h += f'<th>{SUS_DAYS[i]}<br><span style="font-size:0.58rem;opacity:0.7">{SUS_DATES[i]}</span></th>'
+    for i in idx: h += f'<th>{SUS_DAYS[i]}<br><span style="font-size:0.58rem;opacity:0.7">{SUS_DATES[i]}</span></th>'
     h += '</tr></thead><tbody>'
-    tot = [0]*14
+    tot = [0]*len(idx)
     for c in SUS_CARDS:
         vals = card_data.get(c, [0]*14)
         bg = KART_RENKLERI.get(c,"#888")
@@ -327,8 +382,9 @@ def make_grid(card_data, init_key=None):
         if init_key:
             iv = sus["init"].get(c,{}).get(init_key,0)
             h += f'<td style="color:#93c5fd;font-weight:600;">{iv:,}</td>'
-        for i,v in enumerate(vals):
-            tot[i] += v
+        for ji, i in enumerate(idx):
+            v = vals[i] if i < len(vals) else 0
+            tot[ji] += v
             if v < 0: h += f'<td style="background:rgba(239,68,68,0.25);color:#ef4444;font-weight:700;">{v:,}</td>'
             elif v == 0: h += '<td style="color:#475569;">—</td>'
             else: h += f'<td style="color:#fff;">{v:,}</td>'
@@ -339,13 +395,14 @@ def make_grid(card_data, init_key=None):
     h += '</tr></tbody></table>'
     return h
 
-def make_grid_plan(card_data, ref_data=None, init_key=None, init_src=None):
+def make_grid_plan(card_data, ref_data=None, init_key=None, init_src=None, d_idx=None):
     """make_grid'in gelişmiş versiyonu: referanstan farklı hücreleri vurgular."""
+    idx = d_idx if d_idx is not None else list(range(14))
     h = '<table class="otd-table"><thead><tr><th style="text-align:left;">Kart</th>'
     if init_key: h += '<th>Stok₀</th>'
-    for i in range(14): h += f'<th>{SUS_DAYS[i]}<br><span style="font-size:0.58rem;opacity:0.7">{SUS_DATES[i]}</span></th>'
+    for i in idx: h += f'<th>{SUS_DAYS[i]}<br><span style="font-size:0.58rem;opacity:0.7">{SUS_DATES[i]}</span></th>'
     h += '</tr></thead><tbody>'
-    tot = [0]*14
+    tot = [0]*len(idx)
     for c in SUS_CARDS:
         vals = card_data.get(c, [0]*14)
         ref_vals = ref_data.get(c, [0]*14) if ref_data else None
@@ -354,9 +411,11 @@ def make_grid_plan(card_data, ref_data=None, init_key=None, init_src=None):
         if init_key:
             iv = (init_src or sus)["init"].get(c,{}).get(init_key,0)
             h += f'<td style="color:#93c5fd;font-weight:600;">{iv:,}</td>'
-        for i,v in enumerate(vals):
-            tot[i] += v
-            diff = ref_vals and v != ref_vals[i]
+        for ji, i in enumerate(idx):
+            v = vals[i] if i < len(vals) else 0
+            tot[ji] += v
+            rv = ref_vals[i] if ref_vals and i < len(ref_vals) else None
+            diff = rv is not None and v != rv
             outline = "outline:2px solid #22c55e;outline-offset:-2px;" if diff else ""
             if v < 0:
                 h += f'<td style="background:rgba(239,68,68,0.25);color:#ef4444;font-weight:700;{outline}">{v:,}</td>'
@@ -371,9 +430,10 @@ def make_grid_plan(card_data, ref_data=None, init_key=None, init_src=None):
     h += '</tr></tbody></table>'
     return h
 
-def make_alloc(alloc_dict, lines):
+def make_alloc(alloc_dict, lines, d_idx=None):
+    idx = d_idx if d_idx is not None else list(range(14))
     h = '<table class="otd-table"><thead><tr><th style="text-align:left;">Hat</th>'
-    for i in range(14): h += f'<th>{SUS_DAYS[i]}<br><span style="font-size:0.58rem;opacity:0.7">{SUS_DATES[i]}</span></th>'
+    for i in idx: h += f'<th>{SUS_DAYS[i]}<br><span style="font-size:0.58rem;opacity:0.7">{SUS_DATES[i]}</span></th>'
     h += '</tr></thead><tbody>'
     for ln in lines:
         rows = alloc_dict.get(ln, [])
@@ -381,7 +441,8 @@ def make_alloc(alloc_dict, lines):
         disp = rows if isinstance(rows[0], list) else [rows]
         for ri, row in enumerate(disp):
             h += f'<tr><td class="otd-rh">{ln if ri==0 else ""}</td>'
-            for v in row:
+            for i in idx:
+                v = row[i] if i < len(row) else ""
                 if v:
                     bg = KART_RENKLERI.get(v,"#666")
                     h += f'<td style="background:{bg};color:#1e293b;font-weight:700;">{v}</td>'
@@ -390,10 +451,11 @@ def make_alloc(alloc_dict, lines):
     h += '</tbody></table>'
     return h
 
-def make_alloc_compare(alloc_new, alloc_ref, lines):
+def make_alloc_compare(alloc_new, alloc_ref, lines, d_idx=None):
     """İki alokasyon karşılaştırır; farklı hücreleri yeşil çerçeve ile işaretler."""
+    idx = d_idx if d_idx is not None else list(range(14))
     h = '<table class="otd-table"><thead><tr><th style="text-align:left;">Hat</th>'
-    for i in range(14): h += f'<th>{SUS_DAYS[i]}<br><span style="font-size:0.58rem;opacity:0.7">{SUS_DATES[i]}</span></th>'
+    for i in idx: h += f'<th>{SUS_DAYS[i]}<br><span style="font-size:0.58rem;opacity:0.7">{SUS_DATES[i]}</span></th>'
     h += '</tr></thead><tbody>'
     for ln in lines:
         rows_new = alloc_new.get(ln, [])
@@ -404,8 +466,9 @@ def make_alloc_compare(alloc_new, alloc_ref, lines):
         for ri, row in enumerate(disp_new):
             ref_row = disp_ref[ri] if ri < len(disp_ref) else [""] * 14
             h += f'<tr><td class="otd-rh">{ln if ri==0 else ""}</td>'
-            for j, v in enumerate(row):
-                ref_v = ref_row[j] if j < len(ref_row) else ""
+            for i in idx:
+                v = row[i] if i < len(row) else ""
+                ref_v = ref_row[i] if i < len(ref_row) else ""
                 diff = v != ref_v
                 outline = "outline:2px solid #22c55e;outline-offset:-2px;" if diff else ""
                 if v:
@@ -436,6 +499,22 @@ if hl:
     r = KART_RENKLERI.get(hl,"#fff")
     st.sidebar.markdown(f'<div style="background:{r};color:#1e293b;padding:8px 14px;border-radius:8px;font-weight:700;text-align:center;font-size:1.1rem;margin-top:6px;">{hl}</div>', unsafe_allow_html=True)
     st.sidebar.caption("MD geçişi var" if PROCESS_MAP.get(hl) else "MD'yi atlar (OTD → TA)")
+
+# ═══ v3: Tarih Aralığı Filtresi ═══
+st.sidebar.write("---")
+st.sidebar.markdown("**📅 Tarih Aralığı**")
+_date_labels = [f"{SUS_DAYS[i]} {SUS_DATES[i]}" for i in range(14)]
+_d_start, _d_end = st.sidebar.select_slider(
+    "Görüntülenecek tarih aralığı:",
+    options=list(range(14)),
+    value=(st.session_state.date_start_idx, st.session_state.date_end_idx),
+    format_func=lambda x: _date_labels[x],
+    key="date_slider"
+)
+st.session_state.date_start_idx = _d_start
+st.session_state.date_end_idx   = _d_end
+DATE_INDICES = list(range(_d_start, _d_end + 1))
+st.sidebar.caption(f"{len(DATE_INDICES)} gün görüntüleniyor: {SUS_DATES[_d_start]} — {SUS_DATES[_d_end]}")
 
 # =====================================================================
 # SEKMELER
@@ -559,14 +638,149 @@ with tab_panel:
         otd_res = st.session_state.otd_opt_res
 
         if otd_res is None:
-            # Referans plan (optimize edilmemiş)
-            st.markdown("**Hat – Kart Alokasyonu**")
-            st.markdown(make_alloc(sus["otd_alloc"], ["OD0","OD2","OD3","OD4","OD6"]), unsafe_allow_html=True)
-            st.markdown("**Günlük Üretim**")
-            st.markdown(make_grid(sus["otd_daily"]), unsafe_allow_html=True)
-            st.markdown("**📦 Kalan Stok — KSO**")
-            st.caption("🔴 Negatif = stok açığı — üretim talebi karşılayamıyor")
-            st.markdown(make_grid(sus["otd_rem"], "o"), unsafe_allow_html=True)
+            # ═══ v3: Referans / Manuel Düzenleme modları ═══
+            _ref_tab, _edit_tab = st.tabs(["📋 Görüntüle", "✏️ Manuel Düzenle"])
+
+            with _ref_tab:
+                # Referans plan (optimize edilmemiş) — orijinal davranış
+                st.markdown("**Hat – Kart Alokasyonu**")
+                st.markdown(make_alloc(sus["otd_alloc"], ["OD0","OD2","OD3","OD4","OD6"], d_idx=DATE_INDICES), unsafe_allow_html=True)
+                st.markdown("**Günlük Üretim**")
+                st.markdown(make_grid(sus["otd_daily"], d_idx=DATE_INDICES), unsafe_allow_html=True)
+                st.markdown("**📦 Kalan Stok — KSO**")
+                st.caption("🔴 Negatif = stok açığı — üretim talebi karşılayamıyor")
+                st.markdown(make_grid(sus["otd_rem"], "o", d_idx=DATE_INDICES), unsafe_allow_html=True)
+
+            with _edit_tab:
+                st.markdown("""<div style="background:rgba(37,99,235,0.12);border:1px solid rgba(37,99,235,0.3);border-radius:10px;padding:12px 16px;margin-bottom:12px;">
+                    <span style="color:#93c5fd;font-weight:700;">✏️ Manuel Alokasyon Düzenleme</span><br>
+                    <span style="color:#cbd5e1;font-size:0.82rem;">Aşağıdaki tabloda hücrelere tıklayarak kart ataması yapın veya değiştirin. Boş bırakmak için hücreyi temizleyin.<br>
+                    Geçerli kartlar: """ + ", ".join(SUS_CARDS) + """</span>
+                </div>""", unsafe_allow_html=True)
+
+                # Hat-kart uyum bilgisi
+                with st.expander("📖 Hat — Kart Uyumluluk Tablosu", expanded=False):
+                    compat_rows = []
+                    for ln in ["OD0","OD2","OD3","OD4","OD6"]:
+                        cards = sorted([c for c in TEMPO.get(ln, {}) if TEMPO[ln][c] > 0])
+                        compat_rows.append({"Hat": ln, "Üretilebilir Kartlar": ", ".join(cards),
+                                            "Tempoları": " | ".join([f"{c}:{TEMPO[ln][c]}" for c in cards])})
+                    st.dataframe(pd.DataFrame(compat_rows), use_container_width=True, hide_index=True)
+
+                # DataFrame oluştur — mevcut alokasyondan
+                edit_data = {}
+                for ln in ["OD0","OD2","OD3","OD4","OD6"]:
+                    row = sus["otd_alloc"].get(ln, [""]*14)
+                    if isinstance(row[0], list): row = row[0]  # flatten if nested
+                    edit_data[ln] = {f"{SUS_DAYS[i]} {SUS_DATES[i]}": (row[i] if i < len(row) else "") for i in range(14)}
+                df_edit = pd.DataFrame(edit_data).T
+                df_edit.index.name = "Hat"
+
+                # Düzenlenebilir tablo
+                edited_df = st.data_editor(
+                    df_edit,
+                    use_container_width=True,
+                    num_rows="fixed",
+                    key="otd_alloc_editor",
+                    column_config={
+                        col: st.column_config.SelectboxColumn(
+                            col, options=[""] + SUS_CARDS, default="", width="small"
+                        ) for col in df_edit.columns
+                    }
+                )
+
+                # Oran girişi
+                with st.expander("⚙️ Verimlilik Oranları (opsiyonel — varsayılan %100)", expanded=False):
+                    rate_data = {}
+                    for ln in ["OD0","OD2","OD3","OD4","OD6"]:
+                        rates = sus.get("otd_rates", {}).get(ln, [1]*14)
+                        rate_data[ln] = {f"{SUS_DAYS[i]} {SUS_DATES[i]}": rates[i] if i < len(rates) else 1.0 for i in range(14)}
+                    df_rates = pd.DataFrame(rate_data).T
+                    df_rates.index.name = "Hat"
+                    edited_rates = st.data_editor(df_rates, use_container_width=True, num_rows="fixed", key="otd_rate_editor")
+
+                # Uygula / Önizle butonları
+                ec1, ec2, ec3 = st.columns([2, 2, 4])
+                with ec1:
+                    btn_preview = st.button("🔍 Etkiyi Önizle", type="secondary", use_container_width=True, key="btn_preview_alloc")
+                with ec2:
+                    btn_apply = st.button("✅ Alokasyonu Uygula", type="primary", use_container_width=True, key="btn_apply_alloc")
+
+                if btn_preview or btn_apply:
+                    # edited_df → alloc dict'e dönüştür
+                    new_alloc = copy.deepcopy(sus["otd_alloc"])
+                    new_rates = copy.deepcopy(sus.get("otd_rates", {}))
+                    for ln in ["OD0","OD2","OD3","OD4","OD6"]:
+                        row_vals = []
+                        rate_vals = []
+                        for i in range(14):
+                            col_name = f"{SUS_DAYS[i]} {SUS_DATES[i]}"
+                            cell = str(edited_df.loc[ln, col_name]).strip() if col_name in edited_df.columns else ""
+                            row_vals.append(cell if cell in SUS_CARDS else "")
+                            rv = edited_rates.loc[ln, col_name] if col_name in edited_rates.columns else 1.0
+                            rate_vals.append(float(rv) if rv else 1.0)
+                        new_alloc[ln] = row_vals
+                        new_rates[ln] = rate_vals
+
+                    # Alokasyondan günlük üretime dönüştür
+                    new_daily = alloc_to_daily(new_alloc, TEMPO, ["OD0","OD2","OD3","OD4","OD6"], new_rates)
+
+                    # Yeni plan oluştur ve stokları hesapla
+                    preview_plan = copy.deepcopy(sus)
+                    preview_plan["otd_alloc"] = new_alloc
+                    preview_plan["otd_rates"] = new_rates
+                    preview_plan["otd_daily"] = new_daily
+                    preview_plan = recalc_stocks(preview_plan)
+
+                    # Etki hesapla
+                    impact = compute_manual_impact(sus, preview_plan)
+
+                    st.write("---")
+                    st.markdown("### 📊 Değişiklik Etki Analizi")
+
+                    # KPI karşılaştırma
+                    ic1, ic2, ic3, ic4 = st.columns(4)
+                    old_viol = sum(1 for c in SUS_CARDS for v in sus["otd_rem"].get(c,[]) if v<0)
+                    new_viol = sum(1 for c in SUS_CARDS for v in preview_plan["otd_rem"].get(c,[]) if v<0)
+                    old_total = sum(sum(v) for v in sus["otd_daily"].values())
+                    new_total = sum(sum(v) for v in preview_plan["otd_daily"].values())
+                    with ic1: st.metric("KSO İhlal (Önce)", f"{old_viol} gün×kart")
+                    with ic2: st.metric("KSO İhlal (Sonra)", f"{new_viol} gün×kart", delta=f"{new_viol-old_viol:+d}", delta_color="inverse")
+                    with ic3: st.metric("Toplam OTD Üretim (Önce)", f"{old_total:,}")
+                    with ic4: st.metric("Toplam OTD Üretim (Sonra)", f"{new_total:,}", delta=f"{new_total-old_total:+,}")
+
+                    # Detaylı değişiklikler
+                    if impact["changes"]:
+                        st.markdown("**📋 Stok Değişimleri:**")
+                        changes_df = pd.DataFrame(impact["changes"])
+                        changes_df = changes_df.rename(columns={"card":"Kart","stage":"Aşama","day":"Gün","date":"Tarih","old":"Önce","new":"Sonra","diff":"Fark","status":"Durum"})
+                        changes_df["Durum"] = changes_df["Durum"].map({"fixed":"✅ Çözüldü","new_violation":"❌ Yeni İhlal","changed":"🔄 Değişti"})
+                        st.dataframe(changes_df[["Kart","Aşama","Gün","Tarih","Önce","Sonra","Fark","Durum"]], use_container_width=True, hide_index=True, height=min(400, 40+35*len(changes_df)))
+
+                        # Özet
+                        s = impact["summary"]
+                        st.markdown(
+                            f'<div style="background:rgba(255,255,255,0.05);border-radius:10px;padding:12px;margin-top:8px;">'
+                            f'<span style="color:#22c55e;font-weight:700;">✅ {s["fixed"]} ihlal çözüldü</span> &nbsp;|&nbsp; '
+                            f'<span style="color:#ef4444;font-weight:700;">❌ {s["new_violations"]} yeni ihlal</span> &nbsp;|&nbsp; '
+                            f'<span style="color:#93c5fd;">{s["unchanged"]} stok değeri değişti</span></div>',
+                            unsafe_allow_html=True
+                        )
+
+                    # Önizle: alokasyon + stok tabloları
+                    st.markdown("**🔄 Yeni Alokasyon:**")
+                    st.markdown(make_alloc_compare(new_alloc, sus["otd_alloc"], ["OD0","OD2","OD3","OD4","OD6"], d_idx=DATE_INDICES), unsafe_allow_html=True)
+                    st.markdown("**Yeni Günlük Üretim:**")
+                    st.markdown(make_grid_plan(new_daily, sus["otd_daily"], d_idx=DATE_INDICES), unsafe_allow_html=True)
+                    st.markdown("**📦 Yeni Kalan Stok — KSO:**")
+                    st.markdown(make_grid_plan(preview_plan["otd_rem"], sus["otd_rem"], "o", d_idx=DATE_INDICES), unsafe_allow_html=True)
+
+                    if btn_apply:
+                        st.session_state.sus = preview_plan
+                        st.session_state.otd_opt_res = None
+                        st.session_state.manual_impact = impact
+                        st.success("✅ Manuel alokasyon uygulandı, stoklar yeniden hesaplandı!")
+                        st.rerun()
 
         else:
             # Optimizasyon sonucu mevcut — iç sekmeler: Referans | Optimize
@@ -575,12 +789,12 @@ with tab_panel:
 
             with ot1:
                 st.markdown("**Hat – Kart Alokasyonu**")
-                st.markdown(make_alloc(sus["otd_alloc"], ["OD0","OD2","OD3","OD4","OD6"]), unsafe_allow_html=True)
+                st.markdown(make_alloc(sus["otd_alloc"], ["OD0","OD2","OD3","OD4","OD6"], d_idx=DATE_INDICES), unsafe_allow_html=True)
                 st.markdown("**Günlük Üretim**")
-                st.markdown(make_grid(sus["otd_daily"]), unsafe_allow_html=True)
+                st.markdown(make_grid(sus["otd_daily"], d_idx=DATE_INDICES), unsafe_allow_html=True)
                 st.markdown("**📦 Kalan Stok — KSO**")
                 st.caption("🔴 Negatif = stok açığı")
-                st.markdown(make_grid(sus["otd_rem"], "o"), unsafe_allow_html=True)
+                st.markdown(make_grid(sus["otd_rem"], "o", d_idx=DATE_INDICES), unsafe_allow_html=True)
 
             with ot2:
                 st.markdown(f"**{otd_res['message']}**")
@@ -588,11 +802,11 @@ with tab_panel:
                 if proposals:
                     st.caption("🟩 Yeşil çerçeve = referanstan farklı hücreler")
                     st.markdown("**Hat – Kart Alokasyonu (Optimize)**")
-                    st.markdown(make_alloc_compare(np["otd_alloc"], sus["otd_alloc"], ["OD0","OD2","OD3","OD4","OD6"]), unsafe_allow_html=True)
+                    st.markdown(make_alloc_compare(np["otd_alloc"], sus["otd_alloc"], ["OD0","OD2","OD3","OD4","OD6"], d_idx=DATE_INDICES), unsafe_allow_html=True)
                     st.markdown("**Günlük Üretim (Optimize)**")
-                    st.markdown(make_grid_plan(np["otd_daily"], sus["otd_daily"]), unsafe_allow_html=True)
+                    st.markdown(make_grid_plan(np["otd_daily"], sus["otd_daily"], d_idx=DATE_INDICES), unsafe_allow_html=True)
                     st.markdown("**📦 Kalan Stok — KSO (Optimize)**")
-                    st.markdown(make_grid_plan(np["otd_rem"], sus["otd_rem"], "o"), unsafe_allow_html=True)
+                    st.markdown(make_grid_plan(np["otd_rem"], sus["otd_rem"], "o", d_idx=DATE_INDICES), unsafe_allow_html=True)
 
                     st.markdown("---")
                     st.markdown("**📋 Değişiklik Önerileri:**")
@@ -680,11 +894,11 @@ with tab_panel:
 
         if md_res is None:
             st.markdown("**Hat – Kart Alokasyonu**")
-            st.markdown(make_alloc(sus["md_alloc"], ["MD1","MD2"]), unsafe_allow_html=True)
+            st.markdown(make_alloc(sus["md_alloc"], ["MD1","MD2"], d_idx=DATE_INDICES), unsafe_allow_html=True)
             st.markdown("**Günlük Üretim**")
-            st.markdown(make_grid(sus["md_daily"]), unsafe_allow_html=True)
+            st.markdown(make_grid(sus["md_daily"], d_idx=DATE_INDICES), unsafe_allow_html=True)
             st.markdown("**📦 Kalan Stok — KSM**")
-            st.markdown(make_grid(sus["md_rem"], "m"), unsafe_allow_html=True)
+            st.markdown(make_grid(sus["md_rem"], "m", d_idx=DATE_INDICES), unsafe_allow_html=True)
 
         else:
             mt1, mt2 = st.tabs(["📋 Referans Plan (Mevcut)", "⚡ Optimize Sonucu"])
@@ -692,11 +906,11 @@ with tab_panel:
 
             with mt1:
                 st.markdown("**Hat – Kart Alokasyonu**")
-                st.markdown(make_alloc(sus["md_alloc"], ["MD1","MD2"]), unsafe_allow_html=True)
+                st.markdown(make_alloc(sus["md_alloc"], ["MD1","MD2"], d_idx=DATE_INDICES), unsafe_allow_html=True)
                 st.markdown("**Günlük Üretim**")
-                st.markdown(make_grid(sus["md_daily"]), unsafe_allow_html=True)
+                st.markdown(make_grid(sus["md_daily"], d_idx=DATE_INDICES), unsafe_allow_html=True)
                 st.markdown("**📦 Kalan Stok — KSM**")
-                st.markdown(make_grid(sus["md_rem"], "m"), unsafe_allow_html=True)
+                st.markdown(make_grid(sus["md_rem"], "m", d_idx=DATE_INDICES), unsafe_allow_html=True)
 
             with mt2:
                 st.markdown(f"**{md_res['message']}**")
@@ -704,9 +918,9 @@ with tab_panel:
                 if proposals:
                     st.caption("🟩 Yeşil çerçeve = referanstan farklı hücreler")
                     st.markdown("**Günlük Üretim (Optimize)**")
-                    st.markdown(make_grid_plan(np["md_daily"], sus["md_daily"]), unsafe_allow_html=True)
+                    st.markdown(make_grid_plan(np["md_daily"], sus["md_daily"], d_idx=DATE_INDICES), unsafe_allow_html=True)
                     st.markdown("**📦 Kalan Stok — KSM (Optimize)**")
-                    st.markdown(make_grid_plan(np["md_rem"], sus["md_rem"], "m"), unsafe_allow_html=True)
+                    st.markdown(make_grid_plan(np["md_rem"], sus["md_rem"], "m", d_idx=DATE_INDICES), unsafe_allow_html=True)
 
                     st.markdown("---")
                     st.markdown("**📋 Değişiklik Önerileri:**")
@@ -794,11 +1008,11 @@ with tab_panel:
 
         if ta_res is None:
             st.markdown("**Günlük Üretim**")
-            st.markdown(make_grid(sus["ta_daily"]), unsafe_allow_html=True)
+            st.markdown(make_grid(sus["ta_daily"], d_idx=DATE_INDICES), unsafe_allow_html=True)
             st.markdown("**📦 Kalan Stok — KST**")
-            st.markdown(make_grid(sus["ta_rem"], "t"), unsafe_allow_html=True)
+            st.markdown(make_grid(sus["ta_rem"], "t", d_idx=DATE_INDICES), unsafe_allow_html=True)
             st.markdown("**🎯 Montaj Planı (Talep)**")
-            st.markdown(make_grid(sus["assembly"]), unsafe_allow_html=True)
+            st.markdown(make_grid(sus["assembly"], d_idx=DATE_INDICES), unsafe_allow_html=True)
 
         else:
             tt1, tt2 = st.tabs(["📋 Referans Plan (Mevcut)", "⚡ Optimize Sonucu"])
@@ -806,11 +1020,11 @@ with tab_panel:
 
             with tt1:
                 st.markdown("**Günlük Üretim**")
-                st.markdown(make_grid(sus["ta_daily"]), unsafe_allow_html=True)
+                st.markdown(make_grid(sus["ta_daily"], d_idx=DATE_INDICES), unsafe_allow_html=True)
                 st.markdown("**📦 Kalan Stok — KST**")
-                st.markdown(make_grid(sus["ta_rem"], "t"), unsafe_allow_html=True)
+                st.markdown(make_grid(sus["ta_rem"], "t", d_idx=DATE_INDICES), unsafe_allow_html=True)
                 st.markdown("**🎯 Montaj Planı (Talep)**")
-                st.markdown(make_grid(sus["assembly"]), unsafe_allow_html=True)
+                st.markdown(make_grid(sus["assembly"], d_idx=DATE_INDICES), unsafe_allow_html=True)
 
             with tt2:
                 st.markdown(f"**{ta_res['message']}**")
@@ -818,9 +1032,9 @@ with tab_panel:
                 if proposals:
                     st.caption("🟩 Yeşil çerçeve = referanstan farklı hücreler")
                     st.markdown("**Günlük Üretim (Optimize)**")
-                    st.markdown(make_grid_plan(np["ta_daily"], sus["ta_daily"]), unsafe_allow_html=True)
+                    st.markdown(make_grid_plan(np["ta_daily"], sus["ta_daily"], d_idx=DATE_INDICES), unsafe_allow_html=True)
                     st.markdown("**📦 Kalan Stok — KST (Optimize)**")
-                    st.markdown(make_grid_plan(np["ta_rem"], sus["ta_rem"], "t"), unsafe_allow_html=True)
+                    st.markdown(make_grid_plan(np["ta_rem"], sus["ta_rem"], "t", d_idx=DATE_INDICES), unsafe_allow_html=True)
 
                     st.markdown("---")
                     approvals_ta = {}
@@ -1076,5 +1290,8 @@ with tab_veri:
                 st.session_state.otd_opt_res = None
                 st.session_state.md_opt_res  = None
                 st.session_state.ta_opt_res  = None
+                st.session_state.manual_edit_alloc = None
+                st.session_state.manual_edit_before = None
+                st.session_state.manual_impact = None
                 st.success("Tüm veriler varsayılana döndürüldü.")
                 st.rerun()
