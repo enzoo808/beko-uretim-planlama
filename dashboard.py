@@ -77,6 +77,11 @@ if "date_end_idx"   not in st.session_state: st.session_state.date_end_idx   = 1
 if "manual_edit_alloc" not in st.session_state: st.session_state.manual_edit_alloc = None
 if "manual_edit_before" not in st.session_state: st.session_state.manual_edit_before = None
 if "manual_impact" not in st.session_state: st.session_state.manual_impact = None
+# ═══ v3.4: Kalıcı önizleme durumu — oran düzenleme sırasında kaybolmaz ═══
+if "preview_active" not in st.session_state: st.session_state.preview_active = False
+if "preview_alloc" not in st.session_state: st.session_state.preview_alloc = None
+if "preview_rates" not in st.session_state: st.session_state.preview_rates = None
+if "preview_setups" not in st.session_state: st.session_state.preview_setups = None
 
 sus = st.session_state.sus
 
@@ -303,11 +308,12 @@ st.markdown(f"""<style>
     @keyframes fadeSlideIn{{from{{opacity:0;transform:translateY(12px);}}to{{opacity:1;transform:translateY(0);}}}}
     .block-container{{max-width:1300px;animation:fadeSlideIn 0.5s ease-out;}}
     .stTabs [data-baseweb="tab-panel"]{{animation:fadeSlideIn 0.35s ease-out;}}
-    section[data-testid="stSidebar"]{{background:linear-gradient(180deg,rgba(0,20,65,0.96) 0%,rgba(0,10,40,0.98) 40%,rgba(2,15,50,0.96) 100%)!important;backdrop-filter:blur(14px);-webkit-backdrop-filter:blur(14px);border-right:1px solid rgba(147,197,253,0.08);}}
+    section[data-testid="stSidebar"]{{background:linear-gradient(180deg,rgba(0,20,65,0.96) 0%,rgba(0,10,40,0.98) 40%,rgba(2,15,50,0.96) 100%)!important;backdrop-filter:blur(14px);-webkit-backdrop-filter:blur(14px);border-right:1px solid rgba(147,197,253,0.08);overflow-y:auto!important;}}
     section[data-testid="stSidebar"] .stSelectbox label,section[data-testid="stSidebar"] h2{{color:#fff!important;}}
+    section[data-testid="stSidebar"] [data-testid="stSidebarContent"]{{overflow-y:auto!important;}}
     /* ═══ v3.3: Sidebar branding ═══ */
-    section[data-testid="stSidebar"]::before{{content:'';position:absolute;top:0;left:0;right:0;height:180px;background:linear-gradient(135deg,rgba(37,99,235,0.15) 0%,rgba(6,182,212,0.08) 50%,transparent 100%);pointer-events:none;z-index:0;}}
-    section[data-testid="stSidebar"] [data-testid="stSidebarContent"]{{position:relative;z-index:1;}}
+    .sb-glow{{position:sticky;top:0;height:0;overflow:visible;z-index:0;pointer-events:none;}}
+    .sb-glow::after{{content:'';display:block;width:100%;height:180px;background:linear-gradient(135deg,rgba(37,99,235,0.15) 0%,rgba(6,182,212,0.08) 50%,transparent 100%);}}
     .sb-brand{{padding:20px 16px 12px;text-align:center;border-bottom:1px solid rgba(147,197,253,0.1);margin-bottom:16px;}}
     .sb-brand img{{height:50px;margin-bottom:8px;filter:drop-shadow(0 2px 8px rgba(37,99,235,0.3));}}
     .sb-brand-title{{font-size:0.68rem;color:rgba(147,197,253,0.7);letter-spacing:3px;text-transform:uppercase;font-weight:600;margin:0;}}
@@ -629,6 +635,7 @@ st.write("---")
 # =====================================================================
 # ── Beko Brand Header ──
 _sb_logo = f'<img src="data:image/png;base64,{logo_b64}">' if logo_b64 else '<div style="font-size:1.8rem;font-weight:900;color:#fff;letter-spacing:2px;">BEKO</div>'
+st.sidebar.markdown('<div class="sb-glow"></div>', unsafe_allow_html=True)
 st.sidebar.markdown(f"""<div class="sb-brand">
     {_sb_logo}
     <p class="sb-brand-title">Çerkezköy Elektronik</p>
@@ -743,6 +750,8 @@ with tab_panel:
                     st.session_state.otd_opt_res = None
                     st.session_state.md_opt_res  = None
                     st.session_state.ta_opt_res  = None
+                    st.session_state.preview_active = False
+                    st.session_state.preview_alloc = None
                     st.success(f"✅ {len(result['proposals'])} değişiklik uygulandı. Stoklar yeniden hesaplandı.")
                     st.rerun()
                 else:
@@ -791,6 +800,8 @@ with tab_panel:
                         for k in updated: st.session_state.sus[k] = parsed[k]
                         st.session_state.sus = recalc_stocks(st.session_state.sus)
                         st.session_state.otd_opt_res = None
+                        st.session_state.preview_active = False
+                        st.session_state.preview_alloc = None
                         st.success(f"✅ OTD verisi güncellendi: {', '.join(updated)}")
                         st.rerun()
                     else:
@@ -833,11 +844,26 @@ with tab_panel:
             with _edit_tab:
                 st.markdown("""<div style="background:rgba(37,99,235,0.12);border:1px solid rgba(37,99,235,0.3);border-radius:10px;padding:12px 16px;margin-bottom:12px;">
                     <span style="color:#93c5fd;font-weight:700;">✏️ Manuel Alokasyon Düzenleme</span><br>
-                    <span style="color:#cbd5e1;font-size:0.82rem;">Tablodaki hücrelere tıklayarak kart ataması yapın. Setup değişiklikleri otomatik algılanır ve oran önerilir.<br>
-                    Geçerli kartlar: """ + ", ".join(SUS_CARDS) + """</span>
+                    <span style="color:#cbd5e1;font-size:0.82rem;">Tablodaki hücrelere tıklayarak kart ataması yapın. Setup değişiklikleri otomatik algılanır ve oran önerilir.</span>
                 </div>""", unsafe_allow_html=True)
 
-                # ═══ Mevcut durum: birleşik alokasyon + oran tablosu ═══
+                # ═══ v3.4: Optimize Önerisi — referans tablo ═══
+                with st.expander("🤖 Optimize Önerisi (hangi kart nereye atanmalı?)", expanded=False):
+                    _opt_ref = run_stage_opt(sus, "OTD")
+                    if _opt_ref["proposals"]:
+                        st.caption("Optimizer'ın önerdiği değişiklikler — editörde referans olarak kullanabilirsiniz:")
+                        for p in _opt_ref["proposals"]:
+                            st.markdown(
+                                f'<div style="display:flex;align-items:center;gap:8px;padding:6px 10px;margin:3px 0;border-radius:6px;background:rgba(34,197,94,0.06);border:1px solid rgba(34,197,94,0.15);">'
+                                f'<span style="color:#22c55e;font-weight:700;min-width:36px;">{p.get("line","—")}</span>'
+                                f'<span style="color:#93c5fd;">Gün {p["day"]} ({p["date"]})</span>'
+                                f'<span style="color:#fff;font-weight:600;">→ {p["card"]}</span>'
+                                f'<span style="color:#64748b;font-size:0.78rem;margin-left:auto;">({p["impact"]})</span>'
+                                f'</div>', unsafe_allow_html=True)
+                        st.markdown(f'<div style="color:{"#22c55e" if _opt_ref["status"]=="feasible" else "#f59e0b"};font-weight:600;margin-top:8px;">{_opt_ref["message"]}</div>', unsafe_allow_html=True)
+                    else:
+                        st.success("✅ Mevcut OTD planında ihlal yok — optimize önerisi bulunmuyor.")
+
                 with st.expander("📖 Mevcut Alokasyon & Oranlar (salt okunur)", expanded=False):
                     st.markdown(make_alloc_rates_combined(sus["otd_alloc"], sus.get("otd_rates",{}), ["OD0","OD2","OD3","OD4","OD6"], d_idx=DATE_INDICES), unsafe_allow_html=True)
 
@@ -849,7 +875,7 @@ with tab_panel:
                                             "Tempoları": " | ".join([f"{c}:{TEMPO[ln][c]}" for c in cards])})
                     st.dataframe(pd.DataFrame(compat_rows), use_container_width=True, hide_index=True)
 
-                # ═══ Tek editör: kart ataması ═══
+                # ═══ Kart editörü ═══
                 st.markdown("**🎯 Kart Ataması** — hücreye tıklayın, listeden kart seçin:")
                 edit_data = {}
                 for ln in ["OD0","OD2","OD3","OD4","OD6"]:
@@ -869,63 +895,66 @@ with tab_panel:
                     }
                 )
 
-                # ═══ Önizle / Uygula butonları ═══
+                # ═══ Butonlar ═══
                 ec1, ec2, ec3 = st.columns([2, 2, 4])
                 with ec1:
-                    btn_preview = st.button("🔍 Etkiyi Önizle", type="primary", use_container_width=True, key="btn_preview_alloc")
-                with ec2:
-                    btn_apply = st.button("✅ Alokasyonu Uygula", type="secondary", use_container_width=True, key="btn_apply_alloc")
-
-                if btn_preview or btn_apply:
-                    # ── 1. edited_df → alloc dict ──
-                    new_alloc = {}
-                    for ln in ["OD0","OD2","OD3","OD4","OD6"]:
-                        row_vals = []
-                        for i in range(14):
-                            col_name = f"{SUS_DAYS[i]} {SUS_DATES[i]}"
-                            cell = str(edited_df.loc[ln, col_name]).strip() if col_name in edited_df.columns else ""
-                            row_vals.append(cell if cell in SUS_CARDS else "")
-                        new_alloc[ln] = row_vals
-
-                    # ── 2. Setup değişikliklerini algıla ──
-                    setups = detect_setup_changes(new_alloc, sus["otd_alloc"], ["OD0","OD2","OD3","OD4","OD6"])
-                    setup_count = len([s for s in setups if s["suggested_rate"] < 1.0])
-
-                    # ── 3. Oranları hesapla: setup varsa suggested_rate, yoksa mevcut ──
-                    new_rates = {}
-                    for ln in ["OD0","OD2","OD3","OD4","OD6"]:
-                        old_rates = sus.get("otd_rates", {}).get(ln, [1]*14)
-                        old_alloc_row = sus["otd_alloc"].get(ln, [""]*14)
-                        if isinstance(old_alloc_row[0], list): old_alloc_row = old_alloc_row[0]
-                        rate_vals = []
-                        for i in range(14):
-                            card_now = new_alloc[ln][i]
-                            card_before = old_alloc_row[i] if i < len(old_alloc_row) else ""
-                            # Kart aynıysa mevcut oranı koru
-                            if card_now == card_before:
-                                rate_vals.append(old_rates[i] if i < len(old_rates) else 1.0)
-                            elif not card_now:
-                                rate_vals.append(1.0)
-                            else:
-                                # Yeni kart — setup var mı kontrol et
-                                prev_card = new_alloc[ln][i-1] if i > 0 else ""
-                                if prev_card and prev_card != card_now:
-                                    rate_vals.append(SETUP_DEFAULT_RATE)
+                    if st.button("🔍 Etkiyi Önizle", type="primary", use_container_width=True, key="btn_preview_alloc"):
+                        # Düzenlemeyi session state'e kaydet
+                        _new_alloc = {}
+                        for ln in ["OD0","OD2","OD3","OD4","OD6"]:
+                            rv = []
+                            for i in range(14):
+                                cn = f"{SUS_DAYS[i]} {SUS_DATES[i]}"
+                                cell = str(edited_df.loc[ln, cn]).strip() if cn in edited_df.columns else ""
+                                rv.append(cell if cell in SUS_CARDS else "")
+                            _new_alloc[ln] = rv
+                        # Oranları hesapla
+                        _new_rates = {}
+                        _setups = detect_setup_changes(_new_alloc, sus["otd_alloc"], ["OD0","OD2","OD3","OD4","OD6"])
+                        for ln in ["OD0","OD2","OD3","OD4","OD6"]:
+                            old_rates = sus.get("otd_rates", {}).get(ln, [1]*14)
+                            old_alloc_row = sus["otd_alloc"].get(ln, [""]*14)
+                            if isinstance(old_alloc_row[0], list): old_alloc_row = old_alloc_row[0]
+                            rvals = []
+                            for i in range(14):
+                                if _new_alloc[ln][i] == (old_alloc_row[i] if i < len(old_alloc_row) else ""):
+                                    rvals.append(old_rates[i] if i < len(old_rates) else 1.0)
+                                elif not _new_alloc[ln][i]:
+                                    rvals.append(1.0)
                                 else:
-                                    rate_vals.append(1.0)
-                        new_rates[ln] = rate_vals
+                                    prev = _new_alloc[ln][i-1] if i > 0 else ""
+                                    rvals.append(SETUP_DEFAULT_RATE if (prev and prev != _new_alloc[ln][i]) else 1.0)
+                            _new_rates[ln] = rvals
+                        st.session_state.preview_active = True
+                        st.session_state.preview_alloc = _new_alloc
+                        st.session_state.preview_rates = _new_rates
+                        st.session_state.preview_setups = _setups
+                        st.rerun()
+                with ec2:
+                    if st.session_state.preview_active:
+                        if st.button("✗ Önizlemeyi Kapat", use_container_width=True, key="btn_cancel_preview"):
+                            st.session_state.preview_active = False
+                            st.session_state.preview_alloc = None
+                            st.session_state.preview_rates = None
+                            st.session_state.preview_setups = None
+                            st.rerun()
 
-                    # ── 4. Setup varsa kullanıcıya sor ──
-                    if setup_count > 0:
+                # ═══ v3.4: Kalıcı önizleme — session state'den okur, kapanmaz ═══
+                if st.session_state.preview_active and st.session_state.preview_alloc:
+                    p_alloc = st.session_state.preview_alloc
+                    p_rates = st.session_state.preview_rates
+                    p_setups = st.session_state.preview_setups or []
+                    setup_items = [s for s in p_setups if s["suggested_rate"] < 1.0]
+
+                    # ── Setup oranları düzenleme (kalıcı — kapanmaz) ──
+                    if setup_items:
                         st.write("---")
                         st.markdown(f"""<div style="background:rgba(245,158,11,0.12);border:1px solid rgba(245,158,11,0.3);border-radius:10px;padding:12px 16px;">
-                            <span style="color:#f59e0b;font-weight:700;">⚠️ {setup_count} Setup Değişikliği Tespit Edildi</span><br>
-                            <span style="color:#cbd5e1;font-size:0.82rem;">Kart değişikliği olan günlerde verimlilik oranı otomatik olarak %{int(SETUP_DEFAULT_RATE*100)} olarak ayarlandı. Aşağıdan her birini düzenleyebilirsiniz.</span>
+                            <span style="color:#f59e0b;font-weight:700;">⚠️ {len(setup_items)} Setup Değişikliği</span>
+                            <span style="color:#cbd5e1;font-size:0.82rem;"> — Oranları düzenleyebilirsiniz, sayfa kapanmaz:</span>
                         </div>""", unsafe_allow_html=True)
 
-                        for si, s in enumerate(setups):
-                            if s["suggested_rate"] >= 1.0:
-                                continue
+                        for si, s in enumerate(setup_items):
                             sc1, sc2, sc3 = st.columns([4, 2, 2])
                             with sc1:
                                 st.markdown(
@@ -934,35 +963,40 @@ with tab_panel:
                                     f'<span style="color:#ef4444;">{s["prev_card"]}</span> → <span style="color:#22c55e;">{s["new_card"]}</span>'
                                     f'</div>', unsafe_allow_html=True)
                             with sc2:
+                                cur_rate = p_rates[s["line"]][s["day_idx"]]
                                 adj_rate = st.number_input(
-                                    "Oran", value=s["suggested_rate"], min_value=0.0, max_value=1.0,
-                                    step=0.05, format="%.2f", key=f"setup_rate_{si}",
+                                    f'Oran {s["line"]} G{s["day"]}', value=float(cur_rate),
+                                    min_value=0.0, max_value=1.0, step=0.05, format="%.2f",
+                                    key=f"setup_rate_{s['line']}_{s['day_idx']}",
                                     label_visibility="collapsed"
                                 )
-                                new_rates[s["line"]][s["day_idx"]] = adj_rate
+                                # Oranı session state'e geri yaz
+                                if adj_rate != cur_rate:
+                                    st.session_state.preview_rates[s["line"]][s["day_idx"]] = adj_rate
                             with sc3:
                                 pct = int(adj_rate * 100)
-                                bar_color = "#ef4444" if pct < 60 else "#f59e0b" if pct < 100 else "#22c55e"
-                                st.markdown(f'<div style="padding-top:8px;"><span style="color:{bar_color};font-weight:800;font-size:1rem;">%{pct}</span></div>', unsafe_allow_html=True)
+                                clr = "#ef4444" if pct < 60 else "#f59e0b" if pct < 100 else "#22c55e"
+                                st.markdown(f'<div style="padding-top:8px;"><span style="color:{clr};font-weight:800;font-size:1rem;">%{pct}</span></div>', unsafe_allow_html=True)
 
-                    # ── 5. Birleşik önizleme tablosu ──
+                    # Güncel oranlarla hesapla
+                    p_rates = st.session_state.preview_rates  # güncel (düzenlenmiş olabilir)
+
+                    # ── Birleşik önizleme ──
                     st.markdown("**📊 Düzenlenmiş Alokasyon & Oranlar:**")
-                    st.markdown(make_alloc_rates_combined(new_alloc, new_rates, ["OD0","OD2","OD3","OD4","OD6"], d_idx=DATE_INDICES), unsafe_allow_html=True)
+                    st.markdown(make_alloc_rates_combined(p_alloc, p_rates, ["OD0","OD2","OD3","OD4","OD6"], d_idx=DATE_INDICES), unsafe_allow_html=True)
 
-                    # ── 6. Üretim & stok hesapla ──
-                    new_daily = alloc_to_daily(new_alloc, TEMPO, ["OD0","OD2","OD3","OD4","OD6"], new_rates)
+                    # ── Hesapla ──
+                    new_daily = alloc_to_daily(p_alloc, TEMPO, ["OD0","OD2","OD3","OD4","OD6"], p_rates)
                     preview_plan = copy.deepcopy(sus)
-                    preview_plan["otd_alloc"] = new_alloc
-                    preview_plan["otd_rates"] = new_rates
+                    preview_plan["otd_alloc"] = p_alloc
+                    preview_plan["otd_rates"] = p_rates
                     preview_plan["otd_daily"] = new_daily
                     preview_plan = recalc_stocks(preview_plan)
                     impact = compute_manual_impact(sus, preview_plan)
 
-                    # ── 7. DEĞİŞİKLİKLER (ilk gösterilen) ──
+                    # ── Değişiklikler (ilk gösterilen) ──
                     st.write("---")
                     st.markdown("### 🔍 Değişiklik Etki Analizi")
-
-                    # KPI karşılaştırma
                     ic1, ic2, ic3, ic4 = st.columns(4)
                     old_viol = sum(1 for c in SUS_CARDS for v in sus["otd_rem"].get(c,[]) if v<0)
                     new_viol = sum(1 for c in SUS_CARDS for v in preview_plan["otd_rem"].get(c,[]) if v<0)
@@ -985,45 +1019,51 @@ with tab_panel:
                             f'<span style="color:#22c55e;font-weight:700;">✅ {s["fixed"]} ihlal çözüldü</span> &nbsp;|&nbsp; '
                             f'<span style="color:#ef4444;font-weight:700;">❌ {s["new_violations"]} yeni ihlal</span> &nbsp;|&nbsp; '
                             f'<span style="color:#93c5fd;">{s["unchanged"]} stok değeri değişti</span></div>',
-                            unsafe_allow_html=True
-                        )
+                            unsafe_allow_html=True)
 
-                    # ── 8. Detay tabloları (expander) ──
                     with st.expander("📈 Detaylı Tablolar (Üretim & Stok)", expanded=False):
                         st.markdown("**Yeni Günlük Üretim:**")
                         st.markdown(make_grid_plan(new_daily, sus["otd_daily"], d_idx=DATE_INDICES), unsafe_allow_html=True)
                         st.markdown("**📦 Yeni Kalan Stok — KSO:**")
                         st.markdown(make_grid_plan(preview_plan["otd_rem"], sus["otd_rem"], "o", d_idx=DATE_INDICES), unsafe_allow_html=True)
 
-                    # ── 9. Uygula — SİCİL DOĞRULAMASI GEREKLİ ──
-                    if btn_apply:
-                        st.write("---")
-                        if st.session_state.auth:
+                    # ── Uygula — SİCİL DOĞRULAMASI ──
+                    st.write("---")
+                    if st.session_state.auth:
+                        if st.button("✅ Alokasyonu Uygula", type="primary", use_container_width=True, key="btn_apply_final"):
                             st.session_state.sus = preview_plan
                             st.session_state.otd_opt_res = None
                             st.session_state.manual_impact = impact
-                            st.success(f"✅ Manuel alokasyon uygulandı! (Sicil: {st.session_state.auth_sicil})")
+                            st.session_state.preview_active = False
+                            st.session_state.preview_alloc = None
+                            st.session_state.preview_rates = None
+                            st.session_state.preview_setups = None
+                            st.success(f"✅ Uygulandı! (Sicil: {st.session_state.auth_sicil})")
                             st.rerun()
-                        else:
-                            st.markdown("""<div style="background:rgba(239,68,68,0.12);border:1px solid rgba(239,68,68,0.3);border-radius:10px;padding:12px 16px;">
-                                <span style="color:#ef4444;font-weight:700;">🔒 Değişiklik Uygulama — Yetkilendirme Gerekli</span><br>
-                                <span style="color:#cbd5e1;font-size:0.82rem;">Sisteme değişiklik uygulamak için sicil numaranızı girin.</span>
-                            </div>""", unsafe_allow_html=True)
-                            ap1, ap2 = st.columns([3, 1])
-                            with ap1:
-                                apply_sicil = st.text_input("Sicil No:", type="password", placeholder="Sicil numaranız", key="apply_sicil_input", label_visibility="collapsed")
-                            with ap2:
-                                if st.button("🔓 Doğrula & Uygula", type="primary", use_container_width=True, key="apply_sicil_btn"):
-                                    if apply_sicil.strip() in YETKILI_SICILLER:
-                                        st.session_state.auth = True
-                                        st.session_state.auth_sicil = apply_sicil.strip()
-                                        st.session_state.sus = preview_plan
-                                        st.session_state.otd_opt_res = None
-                                        st.session_state.manual_impact = impact
-                                        st.success(f"✅ Yetkilendirildi ve uygulandı! (Sicil: {apply_sicil.strip()})")
-                                        st.rerun()
-                                    else:
-                                        st.error("❌ Yetkisiz sicil numarası.")
+                    else:
+                        st.markdown("""<div style="background:rgba(239,68,68,0.12);border:1px solid rgba(239,68,68,0.3);border-radius:10px;padding:12px 16px;">
+                            <span style="color:#ef4444;font-weight:700;">🔒 Yetkilendirme Gerekli</span>
+                            <span style="color:#cbd5e1;font-size:0.82rem;"> — Değişiklik uygulamak için sicil numaranızı girin.</span>
+                        </div>""", unsafe_allow_html=True)
+                        ap1, ap2 = st.columns([3, 1])
+                        with ap1:
+                            apply_sicil = st.text_input("Sicil:", type="password", placeholder="Sicil numaranız", key="apply_sicil_input", label_visibility="collapsed")
+                        with ap2:
+                            if st.button("🔓 Doğrula & Uygula", type="primary", use_container_width=True, key="apply_sicil_btn"):
+                                if apply_sicil.strip() in YETKILI_SICILLER:
+                                    st.session_state.auth = True
+                                    st.session_state.auth_sicil = apply_sicil.strip()
+                                    st.session_state.sus = preview_plan
+                                    st.session_state.otd_opt_res = None
+                                    st.session_state.manual_impact = impact
+                                    st.session_state.preview_active = False
+                                    st.session_state.preview_alloc = None
+                                    st.session_state.preview_rates = None
+                                    st.session_state.preview_setups = None
+                                    st.success(f"✅ Yetkilendirildi ve uygulandı! (Sicil: {apply_sicil.strip()})")
+                                    st.rerun()
+                                else:
+                                    st.error("❌ Yetkisiz sicil numarası.")
 
         else:
             # Optimizasyon sonucu mevcut — iç sekmeler: Referans | Optimize
@@ -1536,5 +1576,9 @@ with tab_veri:
                 st.session_state.manual_edit_alloc = None
                 st.session_state.manual_edit_before = None
                 st.session_state.manual_impact = None
+                st.session_state.preview_active = False
+                st.session_state.preview_alloc = None
+                st.session_state.preview_rates = None
+                st.session_state.preview_setups = None
                 st.success("Tüm veriler varsayılana döndürüldü.")
                 st.rerun()
