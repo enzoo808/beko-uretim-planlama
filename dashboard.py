@@ -278,7 +278,17 @@ bg_css = ""
 for img_name in ["aaa.jpg","aaa.jpeg","aaa.png"]:
     if os.path.exists(img_name):
         with open(img_name,"rb") as f: bg_b64 = base64.b64encode(f.read()).decode()
-        bg_css = f".stApp{{background:linear-gradient(rgba(0,20,60,0.88),rgba(0,10,40,0.92)),url('data:image/jpeg;base64,{bg_b64}');background-size:cover;background-position:center;background-attachment:fixed;}}"
+        bg_css = (
+            f".stApp{{"
+            f"background:url('data:image/jpeg;base64,{bg_b64}');"
+            f"background-size:cover;background-position:center;background-attachment:fixed;"
+            f"}}"
+            f".stApp::before{{"
+            f"content:'';position:fixed;inset:0;z-index:0;pointer-events:none;"
+            f"background:radial-gradient(ellipse at 50% 40%,rgba(0,15,50,0.52) 0%,rgba(0,10,35,0.78) 70%,rgba(0,5,25,0.88) 100%);"
+            f"}}"
+            f".stApp>*{{position:relative;z-index:1;}}"
+        )
         break
 logo_b64 = ""
 for ln in ["pngwing.com.png","pngwing_com.png","logo.png"]:
@@ -289,13 +299,13 @@ for ln in ["pngwing.com.png","pngwing_com.png","logo.png"]:
 st.markdown(f"""<style>
     {bg_css}
     footer{{visibility:hidden!important;}}
-    header[data-testid="stHeader"]{{background:rgba(0,20,60,0.95)!important;backdrop-filter:blur(10px);}}
+    header[data-testid="stHeader"]{{background:rgba(0,15,45,0.82)!important;backdrop-filter:blur(16px);-webkit-backdrop-filter:blur(16px);}}
     @keyframes fadeSlideIn{{from{{opacity:0;transform:translateY(12px);}}to{{opacity:1;transform:translateY(0);}}}}
     .block-container{{max-width:1300px;animation:fadeSlideIn 0.5s ease-out;}}
     .stTabs [data-baseweb="tab-panel"]{{animation:fadeSlideIn 0.35s ease-out;}}
-    section[data-testid="stSidebar"]{{background:rgba(0,15,45,0.95)!important;}}
+    section[data-testid="stSidebar"]{{background:rgba(0,12,40,0.88)!important;backdrop-filter:blur(14px);-webkit-backdrop-filter:blur(14px);}}
     section[data-testid="stSidebar"] .stSelectbox label,section[data-testid="stSidebar"] h2{{color:#fff!important;}}
-    div[data-testid="stMetric"]{{background:rgba(255,255,255,0.06);border:1px solid rgba(255,255,255,0.1);border-radius:12px;padding:16px;backdrop-filter:blur(10px);}}
+    div[data-testid="stMetric"]{{background:rgba(0,15,50,0.55);border:1px solid rgba(255,255,255,0.1);border-radius:12px;padding:16px;backdrop-filter:blur(12px);-webkit-backdrop-filter:blur(12px);}}
     div[data-testid="stMetric"] label{{color:#93c5fd!important;}}
     div[data-testid="stMetric"] div[data-testid="stMetricValue"]{{color:#fff!important;}}
     .stTabs [data-baseweb="tab-list"]{{gap:8px;}}
@@ -305,11 +315,16 @@ st.markdown(f"""<style>
     .stCaption{{color:#cbd5e1!important;}}
     hr{{border-color:rgba(255,255,255,0.1)!important;}}
     .otd-table{{width:100%;border-collapse:separate;border-spacing:3px;font-family:'Segoe UI',sans-serif;}}
-    .otd-table th{{background:rgba(37,99,235,0.3);color:#93c5fd;padding:8px 5px;font-size:0.75rem;font-weight:600;text-align:center;border-radius:6px;}}
+    .otd-table th{{background:rgba(37,99,235,0.35);color:#93c5fd;padding:8px 5px;font-size:0.75rem;font-weight:600;text-align:center;border-radius:6px;backdrop-filter:blur(6px);}}
     .otd-table td{{padding:7px 5px;text-align:center;font-weight:700;font-size:0.78rem;border-radius:6px;color:#1e293b;}}
-    .otd-rh{{background:rgba(0,0,0,0.35)!important;color:#93c5fd!important;font-weight:700;text-align:left!important;padding-left:10px!important;min-width:48px;}}
+    .otd-rh{{background:rgba(0,0,0,0.45)!important;color:#93c5fd!important;font-weight:700;text-align:left!important;padding-left:10px!important;min-width:48px;backdrop-filter:blur(6px);}}
     .otd-none{{background:rgba(255,255,255,0.04)!important;color:#475569!important;font-weight:400;}}
-    .status-card{{background:rgba(255,255,255,0.05);border:1px solid rgba(255,255,255,0.1);border-radius:12px;padding:16px;margin-bottom:8px;}}
+    .status-card{{background:rgba(0,15,50,0.5);border:1px solid rgba(255,255,255,0.1);border-radius:12px;padding:16px;margin-bottom:8px;backdrop-filter:blur(8px);-webkit-backdrop-filter:blur(8px);}}
+    .status-green{{border-left:4px solid #22c55e;}} .status-yellow{{border-left:4px solid #f59e0b;}} .status-red{{border-left:4px solid #ef4444;}}
+    /* ═══ v3.1: Expander arka plan ═══ */
+    details[data-testid="stExpander"]{{background:rgba(0,12,40,0.45);border-radius:12px;backdrop-filter:blur(10px);-webkit-backdrop-filter:blur(10px);}}
+    /* ═══ v3.1: Oran alt-metin stili ═══ */
+    .rate-sub{{font-size:0.58rem;font-weight:600;opacity:0.85;display:block;margin-top:1px;}}
     .status-green{{border-left:4px solid #22c55e;}} .status-yellow{{border-left:4px solid #f59e0b;}} .status-red{{border-left:4px solid #ef4444;}}
     .big-num{{font-size:1.6rem;font-weight:800;color:#fff;line-height:1.1;}}
     .big-label{{font-size:0.72rem;color:#93c5fd;margin-top:2px;}}
@@ -430,7 +445,7 @@ def make_grid_plan(card_data, ref_data=None, init_key=None, init_src=None, d_idx
     h += '</tr></tbody></table>'
     return h
 
-def make_alloc(alloc_dict, lines, d_idx=None):
+def make_alloc(alloc_dict, lines, d_idx=None, rates_dict=None):
     idx = d_idx if d_idx is not None else list(range(14))
     h = '<table class="otd-table"><thead><tr><th style="text-align:left;">Hat</th>'
     for i in idx: h += f'<th>{SUS_DAYS[i]}<br><span style="font-size:0.58rem;opacity:0.7">{SUS_DATES[i]}</span></th>'
@@ -439,19 +454,27 @@ def make_alloc(alloc_dict, lines, d_idx=None):
         rows = alloc_dict.get(ln, [])
         if not rows: continue
         disp = rows if isinstance(rows[0], list) else [rows]
+        rates = rates_dict.get(ln, [1]*14) if rates_dict else None
         for ri, row in enumerate(disp):
             h += f'<tr><td class="otd-rh">{ln if ri==0 else ""}</td>'
             for i in idx:
                 v = row[i] if i < len(row) else ""
                 if v:
                     bg = KART_RENKLERI.get(v,"#666")
-                    h += f'<td style="background:{bg};color:#1e293b;font-weight:700;">{v}</td>'
+                    rate_val = rates[i] if rates and i < len(rates) else 1.0
+                    rate_html = ""
+                    if rates and rate_val < 1.0:
+                        pct = int(rate_val * 100)
+                        rate_html = f'<span class="rate-sub" style="color:rgba(0,0,0,0.6);">%{pct}</span>'
+                    elif rates and rate_val == 1.0:
+                        rate_html = f'<span class="rate-sub" style="color:rgba(0,0,0,0.35);">%100</span>'
+                    h += f'<td style="background:{bg};color:#1e293b;font-weight:700;line-height:1.15;">{v}{rate_html}</td>'
                 else: h += '<td class="otd-none">—</td>'
             h += '</tr>'
     h += '</tbody></table>'
     return h
 
-def make_alloc_compare(alloc_new, alloc_ref, lines, d_idx=None):
+def make_alloc_compare(alloc_new, alloc_ref, lines, d_idx=None, rates_dict=None):
     """İki alokasyon karşılaştırır; farklı hücreleri yeşil çerçeve ile işaretler."""
     idx = d_idx if d_idx is not None else list(range(14))
     h = '<table class="otd-table"><thead><tr><th style="text-align:left;">Hat</th>'
@@ -463,6 +486,7 @@ def make_alloc_compare(alloc_new, alloc_ref, lines, d_idx=None):
         if not rows_new: continue
         disp_new = rows_new if isinstance(rows_new[0], list) else [rows_new]
         disp_ref = rows_ref if (rows_ref and isinstance(rows_ref[0], list)) else [rows_ref] if rows_ref else [[""] * 14]
+        rates = rates_dict.get(ln, [1]*14) if rates_dict else None
         for ri, row in enumerate(disp_new):
             ref_row = disp_ref[ri] if ri < len(disp_ref) else [""] * 14
             h += f'<tr><td class="otd-rh">{ln if ri==0 else ""}</td>'
@@ -473,10 +497,41 @@ def make_alloc_compare(alloc_new, alloc_ref, lines, d_idx=None):
                 outline = "outline:2px solid #22c55e;outline-offset:-2px;" if diff else ""
                 if v:
                     bg = KART_RENKLERI.get(v,"#666")
-                    h += f'<td style="background:{bg};color:#1e293b;font-weight:700;{outline}">{v}</td>'
+                    rate_val = rates[i] if rates and i < len(rates) else 1.0
+                    rate_html = ""
+                    if rates and rate_val < 1.0:
+                        pct = int(rate_val * 100)
+                        rate_html = f'<span class="rate-sub" style="color:rgba(0,0,0,0.6);">%{pct}</span>'
+                    h += f'<td style="background:{bg};color:#1e293b;font-weight:700;line-height:1.15;{outline}">{v}{rate_html}</td>'
                 else:
                     h += f'<td class="otd-none" style="{outline}">—</td>'
             h += '</tr>'
+    h += '</tbody></table>'
+    return h
+
+def make_rates_table(rates_dict, alloc_dict, lines, d_idx=None):
+    """Verimlilik oranları tablosu — alokasyondaki kart rengini arka plan olarak kullanır."""
+    idx = d_idx if d_idx is not None else list(range(14))
+    h = '<table class="otd-table"><thead><tr><th style="text-align:left;">Hat</th>'
+    for i in idx: h += f'<th>{SUS_DAYS[i]}<br><span style="font-size:0.58rem;opacity:0.7">{SUS_DATES[i]}</span></th>'
+    h += '</tr></thead><tbody>'
+    for ln in lines:
+        rates = rates_dict.get(ln, [1]*14)
+        alloc_row = alloc_dict.get(ln, [""]*14)
+        if isinstance(alloc_row[0] if alloc_row else "", list): alloc_row = alloc_row[0]
+        h += f'<tr><td class="otd-rh">{ln}</td>'
+        for i in idx:
+            rv = rates[i] if i < len(rates) else 1.0
+            card = alloc_row[i] if i < len(alloc_row) else ""
+            pct = int(rv * 100)
+            if not card:
+                h += '<td class="otd-none">—</td>'
+            elif rv < 1.0:
+                bg = KART_RENKLERI.get(card, "#666")
+                h += f'<td style="background:{bg};color:#1e293b;font-weight:800;font-size:0.82rem;">%{pct}</td>'
+            else:
+                h += f'<td style="background:rgba(255,255,255,0.06);color:#64748b;font-weight:500;">%{pct}</td>'
+        h += '</tr>'
     h += '</tbody></table>'
     return h
 
@@ -644,7 +699,11 @@ with tab_panel:
             with _ref_tab:
                 # Referans plan (optimize edilmemiş) — orijinal davranış
                 st.markdown("**Hat – Kart Alokasyonu**")
-                st.markdown(make_alloc(sus["otd_alloc"], ["OD0","OD2","OD3","OD4","OD6"], d_idx=DATE_INDICES), unsafe_allow_html=True)
+                st.markdown(make_alloc(sus["otd_alloc"], ["OD0","OD2","OD3","OD4","OD6"], d_idx=DATE_INDICES, rates_dict=sus.get("otd_rates",{})), unsafe_allow_html=True)
+                # ═══ v3.1: Oranlar ayrı tablo — varsayılan kapalı ═══
+                with st.expander("📊 Verimlilik Oranları (OTD)", expanded=False):
+                    st.caption("Kart renkli hücreler %100'den düşük oranları gösterir. Gri = %100 (tam verim).")
+                    st.markdown(make_rates_table(sus.get("otd_rates",{}), sus["otd_alloc"], ["OD0","OD2","OD3","OD4","OD6"], d_idx=DATE_INDICES), unsafe_allow_html=True)
                 st.markdown("**Günlük Üretim**")
                 st.markdown(make_grid(sus["otd_daily"], d_idx=DATE_INDICES), unsafe_allow_html=True)
                 st.markdown("**📦 Kalan Stok — KSO**")
@@ -677,6 +736,7 @@ with tab_panel:
                 df_edit.index.name = "Hat"
 
                 # Düzenlenebilir tablo
+                st.markdown("**🎯 Kart Ataması** — hücreye tıklayın ve listeden kart seçin:")
                 edited_df = st.data_editor(
                     df_edit,
                     use_container_width=True,
@@ -689,15 +749,26 @@ with tab_panel:
                     }
                 )
 
-                # Oran girişi
-                with st.expander("⚙️ Verimlilik Oranları (opsiyonel — varsayılan %100)", expanded=False):
-                    rate_data = {}
-                    for ln in ["OD0","OD2","OD3","OD4","OD6"]:
-                        rates = sus.get("otd_rates", {}).get(ln, [1]*14)
-                        rate_data[ln] = {f"{SUS_DAYS[i]} {SUS_DATES[i]}": rates[i] if i < len(rates) else 1.0 for i in range(14)}
-                    df_rates = pd.DataFrame(rate_data).T
-                    df_rates.index.name = "Hat"
-                    edited_rates = st.data_editor(df_rates, use_container_width=True, num_rows="fixed", key="otd_rate_editor")
+                # ═══ v3.1: Oran editörü — alokasyonla birleşik görünüm ═══
+                st.markdown("**📊 Verimlilik Oranları** — her hücrenin üretim oranı (0.0 – 1.0, varsayılan 1.0 = %100):")
+                st.caption("💡 Setup değişikliği olan günlerde oran < 1.0 olarak girin (ör: 0.5 = %50 verimlilik)")
+                rate_data = {}
+                for ln in ["OD0","OD2","OD3","OD4","OD6"]:
+                    rates = sus.get("otd_rates", {}).get(ln, [1]*14)
+                    rate_data[ln] = {f"{SUS_DAYS[i]} {SUS_DATES[i]}": rates[i] if i < len(rates) else 1.0 for i in range(14)}
+                df_rates = pd.DataFrame(rate_data).T
+                df_rates.index.name = "Hat"
+                edited_rates = st.data_editor(
+                    df_rates,
+                    use_container_width=True,
+                    num_rows="fixed",
+                    key="otd_rate_editor",
+                    column_config={
+                        col: st.column_config.NumberColumn(
+                            col, min_value=0.0, max_value=1.0, step=0.05, format="%.2f", width="small"
+                        ) for col in df_rates.columns
+                    }
+                )
 
                 # Uygula / Önizle butonları
                 ec1, ec2, ec3 = st.columns([2, 2, 4])
@@ -769,7 +840,7 @@ with tab_panel:
 
                     # Önizle: alokasyon + stok tabloları
                     st.markdown("**🔄 Yeni Alokasyon:**")
-                    st.markdown(make_alloc_compare(new_alloc, sus["otd_alloc"], ["OD0","OD2","OD3","OD4","OD6"], d_idx=DATE_INDICES), unsafe_allow_html=True)
+                    st.markdown(make_alloc_compare(new_alloc, sus["otd_alloc"], ["OD0","OD2","OD3","OD4","OD6"], d_idx=DATE_INDICES, rates_dict=new_rates), unsafe_allow_html=True)
                     st.markdown("**Yeni Günlük Üretim:**")
                     st.markdown(make_grid_plan(new_daily, sus["otd_daily"], d_idx=DATE_INDICES), unsafe_allow_html=True)
                     st.markdown("**📦 Yeni Kalan Stok — KSO:**")
@@ -789,7 +860,7 @@ with tab_panel:
 
             with ot1:
                 st.markdown("**Hat – Kart Alokasyonu**")
-                st.markdown(make_alloc(sus["otd_alloc"], ["OD0","OD2","OD3","OD4","OD6"], d_idx=DATE_INDICES), unsafe_allow_html=True)
+                st.markdown(make_alloc(sus["otd_alloc"], ["OD0","OD2","OD3","OD4","OD6"], d_idx=DATE_INDICES, rates_dict=sus.get("otd_rates",{})), unsafe_allow_html=True)
                 st.markdown("**Günlük Üretim**")
                 st.markdown(make_grid(sus["otd_daily"], d_idx=DATE_INDICES), unsafe_allow_html=True)
                 st.markdown("**📦 Kalan Stok — KSO**")
@@ -802,7 +873,7 @@ with tab_panel:
                 if proposals:
                     st.caption("🟩 Yeşil çerçeve = referanstan farklı hücreler")
                     st.markdown("**Hat – Kart Alokasyonu (Optimize)**")
-                    st.markdown(make_alloc_compare(np["otd_alloc"], sus["otd_alloc"], ["OD0","OD2","OD3","OD4","OD6"], d_idx=DATE_INDICES), unsafe_allow_html=True)
+                    st.markdown(make_alloc_compare(np["otd_alloc"], sus["otd_alloc"], ["OD0","OD2","OD3","OD4","OD6"], d_idx=DATE_INDICES, rates_dict=sus.get("otd_rates",{})), unsafe_allow_html=True)
                     st.markdown("**Günlük Üretim (Optimize)**")
                     st.markdown(make_grid_plan(np["otd_daily"], sus["otd_daily"], d_idx=DATE_INDICES), unsafe_allow_html=True)
                     st.markdown("**📦 Kalan Stok — KSO (Optimize)**")
