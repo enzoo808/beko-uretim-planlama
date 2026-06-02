@@ -1,6 +1,7 @@
 import streamlit as st
 import pandas as pd
 import json, base64, os, copy
+from datetime import datetime, timedelta
 import plotly.graph_objects as go
 
 # =====================================================================
@@ -19,10 +20,12 @@ KART_RENKLERI = {
     "XGS":"#80CBC4","XR":"#F48FB1","Y3":"#C5E1A5","Y4":"#FFCCBC",
 }
 
-SUS_DATES = ["07.05","08.05","09.05","11.05","12.05","13.05","14.05","15.05","16.05","18.05","20.05","21.05","22.05","23.05"]
-SUS_DAYS  = ["Perş","Cum","Cmt","Pzt","Sal","Çar","Perş","Cum","Cmt","Pzt","Çar","Perş","Cum","Cmt"]
+_DEFAULT_DATES = ["07.05","08.05","09.05","11.05","12.05","13.05","14.05","15.05","16.05","18.05","20.05","21.05","22.05","23.05"]
+_DEFAULT_DAYS  = ["Perş","Cum","Cmt","Pzt","Sal","Çar","Perş","Cum","Cmt","Pzt","Çar","Perş","Cum","Cmt"]
 SUS_CARDS = ["F4","GB","GL","GX","LG","MR","V1","XC","XD","XGB","XGS","XR","Y3","Y4"]
 PROCESS_MAP = {"F4":True,"GB":True,"GL":True,"GX":False,"LG":False,"MR":True,"V1":True,"XC":False,"XD":False,"XGB":True,"XGS":True,"XR":False,"Y3":True,"Y4":True}
+
+_TR_DAYS = {0:"Pzt",1:"Sal",2:"Çar",3:"Perş",4:"Cum",5:"Cmt",6:"Paz"}
 
 TEMPO = {
     "OD0":{"F4":100,"GX":800,"V1":1000,"XGB":927,"XGS":1040,"Y3":880,"Y4":850},
@@ -83,6 +86,55 @@ if "preview_alloc" not in st.session_state: st.session_state.preview_alloc = Non
 if "preview_rates" not in st.session_state: st.session_state.preview_rates = None
 if "preview_setups" not in st.session_state: st.session_state.preview_setups = None
 
+# ═══ v3.5: Dinamik planlama ufku ═══
+if "dyn_dates" not in st.session_state: st.session_state.dyn_dates = list(_DEFAULT_DATES)
+if "dyn_days"  not in st.session_state: st.session_state.dyn_days  = list(_DEFAULT_DAYS)
+
+# Modül seviyesinde referans — tüm fonksiyonlar bunları kullanır
+SUS_DATES = st.session_state.dyn_dates
+SUS_DAYS  = st.session_state.dyn_days
+N_DAYS    = len(SUS_DATES)
+
+def extend_horizon(n_extra):
+    """Planlama ufkunu n_extra gün uzatır (Pazar hariç). Tüm veri dizilerini pad'ler."""
+    last_str = st.session_state.dyn_dates[-1]   # "23.05"
+    dd, mm = int(last_str[:2]), int(last_str[3:])
+    last_dt = datetime(2026, mm, dd)
+    added = 0
+    while added < n_extra:
+        last_dt += timedelta(days=1)
+        if last_dt.weekday() == 6:  # Pazar — atla
+            continue
+        st.session_state.dyn_dates.append(last_dt.strftime("%d.%m"))
+        st.session_state.dyn_days.append(_TR_DAYS[last_dt.weekday()])
+        added += 1
+    # Tüm veri dizilerini pad'le
+    sus = st.session_state.sus
+    new_n = len(st.session_state.dyn_dates)
+    for key in ["otd_daily","otd_rem","md_daily","md_rem","ta_daily","ta_rem","assembly"]:
+        for c in SUS_CARDS:
+            arr = sus.get(key, {}).get(c, [])
+            if len(arr) < new_n:
+                sus[key][c] = arr + [0] * (new_n - len(arr))
+    for key in ["otd_alloc"]:
+        for ln in sus.get(key, {}):
+            arr = sus[key][ln]
+            if isinstance(arr[0], list):
+                for row in arr:
+                    if len(row) < new_n: row.extend([""] * (new_n - len(row)))
+            else:
+                if len(arr) < new_n: sus[key][ln] = arr + [""] * (new_n - len(arr))
+    for key in ["md_alloc"]:
+        for ln in sus.get(key, {}):
+            rows = sus[key][ln]
+            for row in rows:
+                if isinstance(row, list) and len(row) < new_n:
+                    row.extend([""] * (new_n - len(row)))
+    for ln in sus.get("otd_rates", {}):
+        arr = sus["otd_rates"][ln]
+        if len(arr) < new_n: sus["otd_rates"][ln] = arr + [1.0] * (new_n - len(arr))
+    st.session_state.sus = recalc_stocks(sus)
+
 sus = st.session_state.sus
 
 # =====================================================================
@@ -91,41 +143,43 @@ sus = st.session_state.sus
 def recalc_stocks(plan):
     p = copy.deepcopy(plan)
     init = p["init"]
+    nd = len(st.session_state.dyn_dates)
     for c in SUS_CARDS:
-        otd = p["otd_daily"].get(c, [0]*14)
-        asm = p["assembly"].get(c, [0]*14)
-        md  = p["md_daily"].get(c, [0]*14)
-        ta  = p["ta_daily"].get(c, [0]*14)
+        otd = p["otd_daily"].get(c, [0]*nd)
+        asm = p["assembly"].get(c, [0]*nd)
+        md  = p["md_daily"].get(c, [0]*nd)
+        ta  = p["ta_daily"].get(c, [0]*nd)
         needs_md = PROCESS_MAP.get(c, False)
         cum_otd = 0; cum_down = 0; otd_rem = []
-        for i in range(14):
-            cum_otd  += otd[i]
-            cum_down += (md[i] if needs_md else ta[i])
+        for i in range(nd):
+            cum_otd  += otd[i] if i < len(otd) else 0
+            cum_down += (md[i] if needs_md else ta[i]) if i < len(md if needs_md else ta) else 0
             otd_rem.append(init.get(c,{}).get("o",0) + cum_otd - cum_down)
         p["otd_rem"][c] = otd_rem
         if needs_md:
             cum_md = 0; cum_ta_d = 0; md_rem = []
-            for i in range(14):
-                cum_md   += md[i]
-                cum_ta_d += ta[i]
+            for i in range(nd):
+                cum_md   += md[i] if i < len(md) else 0
+                cum_ta_d += ta[i] if i < len(ta) else 0
                 md_rem.append(init.get(c,{}).get("m",0) + cum_md - cum_ta_d)
             p["md_rem"][c] = md_rem
         cum_ta = 0; cum_asm = 0; ta_rem = []
-        for i in range(14):
-            cum_ta  += ta[i]
-            cum_asm += asm[i]
+        for i in range(nd):
+            cum_ta  += ta[i] if i < len(ta) else 0
+            cum_asm += asm[i] if i < len(asm) else 0
             ta_rem.append(init.get(c,{}).get("t",0) + cum_ta - cum_asm)
         p["ta_rem"][c] = ta_rem
     return p
 
 def run_optimization(current_plan):
     plan = copy.deepcopy(current_plan)
+    nd = len(st.session_state.dyn_dates)
     proposals = []
     violations = []
     for stage, rem_key, stage_label in [("OTD","otd_rem","KSO"),("MD","md_rem","KSM"),("TA","ta_rem","KST")]:
         for c in SUS_CARDS:
             if stage == "MD" and not PROCESS_MAP.get(c): continue
-            rem = plan[rem_key].get(c, [0]*14)
+            rem = plan[rem_key].get(c, [0]*nd)
             for i, v in enumerate(rem):
                 if v < 0:
                     violations.append({"card":c,"stage":stage,"day":i,"deficit":abs(v),"rem_key":rem_key,"label":stage_label})
@@ -138,13 +192,13 @@ def run_optimization(current_plan):
             alloc = applied["otd_alloc"]
             for d in range(max(0, day-2), day+1):
                 for line in ["OD0","OD2","OD3","OD4","OD6"]:
-                    line_alloc = alloc.get(line, [""]*14)
+                    line_alloc = alloc.get(line, [""]*nd)
                     if d < len(line_alloc) and line_alloc[d] == "":
                         cap = TEMPO.get(line, {}).get(c, 0)
                         if cap > 0:
-                            old_val = applied["otd_daily"][c][d]
+                            old_val = applied["otd_daily"][c][d] if d < len(applied["otd_daily"].get(c,[])) else 0
                             add = min(cap, deficit)
-                            proposals.append({"type":"OTD üretim ekle","card":c,"day":d+1,"date":SUS_DATES[d],"line":line,"old":old_val,"new":old_val+add,"reason":f"{c} KSO Gün {day+1}'de −{deficit:,} açık","impact":f"+{add:,} adet üretim"})
+                            proposals.append({"type":"OTD üretim ekle","card":c,"day":d+1,"date":SUS_DATES[d] if d<len(SUS_DATES) else f"G{d+1}","line":line,"old":old_val,"new":old_val+add,"reason":f"{c} KSO Gün {day+1}'de −{deficit:,} açık","impact":f"+{add:,} adet üretim"})
                             applied["otd_daily"][c][d] += add
                             line_alloc[d] = c
                             deficit -= add
@@ -209,7 +263,7 @@ def run_stage_opt(plan, stage):
         if stage == "OTD":
             new_plan["otd_daily"][c][d] = p["new"]
             if p.get("line"):
-                alloc = new_plan["otd_alloc"].get(p["line"], [""]*14)
+                alloc = new_plan["otd_alloc"].get(p["line"], [""]*N_DAYS)
                 if d < len(alloc): alloc[d] = c
         elif stage == "MD":
             new_plan["md_daily"][c][d] = p["new"]
@@ -235,7 +289,7 @@ def apply_stage_proposals(proposals, plan, stage, approvals=None):
         if stage == "OTD":
             applied["otd_daily"][c][d] = p["new"]
             if p.get("line"):
-                alloc = applied["otd_alloc"].get(p["line"], [""]*14)
+                alloc = applied["otd_alloc"].get(p["line"], [""]*N_DAYS)
                 if d < len(alloc): alloc[d] = c
         elif stage == "MD":
             applied["md_daily"][c][d] = p["new"]
@@ -290,7 +344,7 @@ for img_name in ["aaa.jpg","aaa.jpeg","aaa.png"]:
             f"}}"
             f".stApp::before{{"
             f"content:'';position:fixed;inset:0;z-index:0;pointer-events:none;"
-            f"background:radial-gradient(ellipse at 50% 40%,rgba(0,12,45,0.38) 0%,rgba(0,8,30,0.62) 60%,rgba(0,5,25,0.80) 100%);"
+            f"background:radial-gradient(ellipse at 50% 40%,rgba(0,10,40,0.30) 0%,rgba(0,8,30,0.55) 60%,rgba(0,5,25,0.75) 100%);"
             f"}}"
             f".stApp>*{{position:relative;z-index:1;}}"
         )
@@ -308,7 +362,18 @@ st.markdown(f"""<style>
     @keyframes fadeSlideIn{{from{{opacity:0;transform:translateY(12px);}}to{{opacity:1;transform:translateY(0);}}}}
     .block-container{{max-width:1300px;animation:fadeSlideIn 0.5s ease-out;}}
     .stTabs [data-baseweb="tab-panel"]{{animation:fadeSlideIn 0.35s ease-out;}}
-    section[data-testid="stSidebar"]{{background:linear-gradient(180deg,rgba(0,20,65,0.96) 0%,rgba(0,10,40,0.98) 40%,rgba(2,15,50,0.96) 100%)!important;backdrop-filter:blur(14px);-webkit-backdrop-filter:blur(14px);border-right:1px solid rgba(147,197,253,0.08);overflow-y:auto!important;}}
+    section[data-testid="stSidebar"]{{
+        background:
+            linear-gradient(180deg,rgba(0,20,65,0.94) 0%,rgba(0,10,40,0.97) 40%,rgba(2,15,50,0.94) 100%),
+            repeating-linear-gradient(0deg,transparent,transparent 60px,rgba(37,99,235,0.03) 60px,rgba(37,99,235,0.03) 61px),
+            repeating-linear-gradient(90deg,transparent,transparent 60px,rgba(37,99,235,0.03) 60px,rgba(37,99,235,0.03) 61px),
+            radial-gradient(ellipse at 20% 80%,rgba(6,182,212,0.06) 0%,transparent 50%),
+            radial-gradient(ellipse at 80% 20%,rgba(37,99,235,0.08) 0%,transparent 40%)
+        !important;
+        backdrop-filter:blur(14px);-webkit-backdrop-filter:blur(14px);
+        border-right:1px solid rgba(147,197,253,0.08);
+        overflow-y:auto!important;
+    }}
     section[data-testid="stSidebar"] .stSelectbox label,section[data-testid="stSidebar"] h2{{color:#fff!important;}}
     section[data-testid="stSidebar"] [data-testid="stSidebarContent"]{{overflow-y:auto!important;}}
     /* ═══ v3.3: Sidebar branding ═══ */
@@ -366,14 +431,15 @@ st.markdown(f"""<style>
 # ═══ v3: Alokasyondan günlük üretime dönüşüm ═══
 def alloc_to_daily(alloc_dict, tempo_dict, lines, rates_dict=None):
     """OTD alokasyonunu günlük üretim miktarlarına dönüştürür."""
-    daily = {c: [0]*14 for c in SUS_CARDS}
+    nd = len(st.session_state.dyn_dates)
+    daily = {c: [0]*nd for c in SUS_CARDS}
     for ln in lines:
-        row_data = alloc_dict.get(ln, [""]*14)
+        row_data = alloc_dict.get(ln, [""]*nd)
         rows = row_data if (row_data and isinstance(row_data[0], list)) else [row_data]
-        rates = rates_dict.get(ln, [1]*14) if rates_dict else [1]*14
+        rates = rates_dict.get(ln, [1]*nd) if rates_dict else [1]*nd
         for row in rows:
             for i, card in enumerate(row):
-                if i < 14 and card and card in SUS_CARDS:
+                if i < nd and card and card in SUS_CARDS:
                     cap = tempo_dict.get(ln, {}).get(card, 0)
                     rate = rates[i] if i < len(rates) else 1
                     daily[card][i] += int(cap * rate)
@@ -385,9 +451,9 @@ def compute_manual_impact(old_plan, new_plan):
     for stage, rem_key, label in [("OTD","otd_rem","KSO"),("MD","md_rem","KSM"),("TA","ta_rem","KST")]:
         for c in SUS_CARDS:
             if rem_key == "md_rem" and not PROCESS_MAP.get(c): continue
-            old_rem = old_plan[rem_key].get(c, [0]*14)
-            new_rem = new_plan[rem_key].get(c, [0]*14)
-            for i in range(14):
+            old_rem = old_plan[rem_key].get(c, [0]*N_DAYS)
+            new_rem = new_plan[rem_key].get(c, [0]*N_DAYS)
+            for i in range(N_DAYS):
                 ov, nv = old_rem[i], new_rem[i]
                 if ov != nv:
                     change = {"card": c, "stage": label, "day": i+1, "date": SUS_DATES[i],
@@ -412,11 +478,11 @@ def detect_setup_changes(new_alloc, old_alloc, lines):
     Bir gün önceki kart ile o günkü kart farklıysa setup değişikliği var demektir."""
     setups = []
     for ln in lines:
-        new_row = new_alloc.get(ln, [""]*14)
-        old_row = old_alloc.get(ln, [""]*14)
+        new_row = new_alloc.get(ln, [""]*N_DAYS)
+        old_row = old_alloc.get(ln, [""]*N_DAYS)
         if isinstance(new_row[0], list): new_row = new_row[0]
         if isinstance(old_row[0], list): old_row = old_row[0]
-        for i in range(14):
+        for i in range(N_DAYS):
             new_card = new_row[i] if i < len(new_row) else ""
             old_card = old_row[i] if i < len(old_row) else ""
             if not new_card:
@@ -440,7 +506,7 @@ def detect_setup_changes(new_alloc, old_alloc, lines):
 
 def make_alloc_rates_combined(alloc_dict, rates_dict, lines, d_idx=None):
     """Alokasyon + oranlar birleşik HTML tablosu."""
-    idx = d_idx if d_idx is not None else list(range(14))
+    idx = d_idx if d_idx is not None else list(range(N_DAYS))
     h = '<table class="otd-table"><thead><tr><th style="text-align:left;">Hat</th>'
     for i in idx: h += f'<th>{SUS_DAYS[i]}<br><span style="font-size:0.58rem;opacity:0.7">{SUS_DATES[i]}</span></th>'
     h += '</tr></thead><tbody>'
@@ -448,7 +514,7 @@ def make_alloc_rates_combined(alloc_dict, rates_dict, lines, d_idx=None):
         rows = alloc_dict.get(ln, [])
         if not rows: continue
         disp = rows if isinstance(rows[0], list) else [rows]
-        rates = rates_dict.get(ln, [1]*14) if rates_dict else [1]*14
+        rates = rates_dict.get(ln, [1]*N_DAYS) if rates_dict else [1]*N_DAYS
         for ri, row in enumerate(disp):
             h += f'<tr><td class="otd-rh">{ln if ri==0 else ""}</td>'
             for i in idx:
@@ -471,14 +537,14 @@ def make_alloc_rates_combined(alloc_dict, rates_dict, lines, d_idx=None):
     h += '</tbody></table>'
     return h
 def make_grid(card_data, init_key=None, d_idx=None):
-    idx = d_idx if d_idx is not None else list(range(14))
+    idx = d_idx if d_idx is not None else list(range(N_DAYS))
     h = '<table class="otd-table"><thead><tr><th style="text-align:left;">Kart</th>'
     if init_key: h += '<th>Stok₀</th>'
     for i in idx: h += f'<th>{SUS_DAYS[i]}<br><span style="font-size:0.58rem;opacity:0.7">{SUS_DATES[i]}</span></th>'
     h += '</tr></thead><tbody>'
     tot = [0]*len(idx)
     for c in SUS_CARDS:
-        vals = card_data.get(c, [0]*14)
+        vals = card_data.get(c, [0]*N_DAYS)
         bg = KART_RENKLERI.get(c,"#888")
         h += f'<tr><td style="background:{bg};color:#1e293b;font-weight:700;text-align:left;padding-left:8px;border-radius:6px;">{c}</td>'
         if init_key:
@@ -499,15 +565,15 @@ def make_grid(card_data, init_key=None, d_idx=None):
 
 def make_grid_plan(card_data, ref_data=None, init_key=None, init_src=None, d_idx=None):
     """make_grid'in gelişmiş versiyonu: referanstan farklı hücreleri vurgular."""
-    idx = d_idx if d_idx is not None else list(range(14))
+    idx = d_idx if d_idx is not None else list(range(N_DAYS))
     h = '<table class="otd-table"><thead><tr><th style="text-align:left;">Kart</th>'
     if init_key: h += '<th>Stok₀</th>'
     for i in idx: h += f'<th>{SUS_DAYS[i]}<br><span style="font-size:0.58rem;opacity:0.7">{SUS_DATES[i]}</span></th>'
     h += '</tr></thead><tbody>'
     tot = [0]*len(idx)
     for c in SUS_CARDS:
-        vals = card_data.get(c, [0]*14)
-        ref_vals = ref_data.get(c, [0]*14) if ref_data else None
+        vals = card_data.get(c, [0]*N_DAYS)
+        ref_vals = ref_data.get(c, [0]*N_DAYS) if ref_data else None
         bg = KART_RENKLERI.get(c,"#888")
         h += f'<tr><td style="background:{bg};color:#1e293b;font-weight:700;text-align:left;padding-left:8px;border-radius:6px;">{c}</td>'
         if init_key:
@@ -533,7 +599,7 @@ def make_grid_plan(card_data, ref_data=None, init_key=None, init_src=None, d_idx
     return h
 
 def make_alloc(alloc_dict, lines, d_idx=None, rates_dict=None):
-    idx = d_idx if d_idx is not None else list(range(14))
+    idx = d_idx if d_idx is not None else list(range(N_DAYS))
     h = '<table class="otd-table"><thead><tr><th style="text-align:left;">Hat</th>'
     for i in idx: h += f'<th>{SUS_DAYS[i]}<br><span style="font-size:0.58rem;opacity:0.7">{SUS_DATES[i]}</span></th>'
     h += '</tr></thead><tbody>'
@@ -541,7 +607,7 @@ def make_alloc(alloc_dict, lines, d_idx=None, rates_dict=None):
         rows = alloc_dict.get(ln, [])
         if not rows: continue
         disp = rows if isinstance(rows[0], list) else [rows]
-        rates = rates_dict.get(ln, [1]*14) if rates_dict else None
+        rates = rates_dict.get(ln, [1]*N_DAYS) if rates_dict else None
         for ri, row in enumerate(disp):
             h += f'<tr><td class="otd-rh">{ln if ri==0 else ""}</td>'
             for i in idx:
@@ -563,7 +629,7 @@ def make_alloc(alloc_dict, lines, d_idx=None, rates_dict=None):
 
 def make_alloc_compare(alloc_new, alloc_ref, lines, d_idx=None, rates_dict=None):
     """İki alokasyon karşılaştırır; farklı hücreleri yeşil çerçeve ile işaretler."""
-    idx = d_idx if d_idx is not None else list(range(14))
+    idx = d_idx if d_idx is not None else list(range(N_DAYS))
     h = '<table class="otd-table"><thead><tr><th style="text-align:left;">Hat</th>'
     for i in idx: h += f'<th>{SUS_DAYS[i]}<br><span style="font-size:0.58rem;opacity:0.7">{SUS_DATES[i]}</span></th>'
     h += '</tr></thead><tbody>'
@@ -573,7 +639,7 @@ def make_alloc_compare(alloc_new, alloc_ref, lines, d_idx=None, rates_dict=None)
         if not rows_new: continue
         disp_new = rows_new if isinstance(rows_new[0], list) else [rows_new]
         disp_ref = rows_ref if (rows_ref and isinstance(rows_ref[0], list)) else [rows_ref] if rows_ref else [[""] * 14]
-        rates = rates_dict.get(ln, [1]*14) if rates_dict else None
+        rates = rates_dict.get(ln, [1]*N_DAYS) if rates_dict else None
         for ri, row in enumerate(disp_new):
             ref_row = disp_ref[ri] if ri < len(disp_ref) else [""] * 14
             h += f'<tr><td class="otd-rh">{ln if ri==0 else ""}</td>'
@@ -598,13 +664,13 @@ def make_alloc_compare(alloc_new, alloc_ref, lines, d_idx=None, rates_dict=None)
 
 def make_rates_table(rates_dict, alloc_dict, lines, d_idx=None):
     """Verimlilik oranları tablosu — alokasyondaki kart rengini arka plan olarak kullanır."""
-    idx = d_idx if d_idx is not None else list(range(14))
+    idx = d_idx if d_idx is not None else list(range(N_DAYS))
     h = '<table class="otd-table"><thead><tr><th style="text-align:left;">Hat</th>'
     for i in idx: h += f'<th>{SUS_DAYS[i]}<br><span style="font-size:0.58rem;opacity:0.7">{SUS_DATES[i]}</span></th>'
     h += '</tr></thead><tbody>'
     for ln in lines:
-        rates = rates_dict.get(ln, [1]*14)
-        alloc_row = alloc_dict.get(ln, [""]*14)
+        rates = rates_dict.get(ln, [1]*N_DAYS)
+        alloc_row = alloc_dict.get(ln, [""]*N_DAYS)
         if isinstance(alloc_row[0] if alloc_row else "", list): alloc_row = alloc_row[0]
         h += f'<tr><td class="otd-rh">{ln}</td>'
         for i in idx:
@@ -659,10 +725,10 @@ if hl:
 # ── Tarih Aralığı ──
 st.sidebar.markdown('<div class="sb-divider"></div>', unsafe_allow_html=True)
 st.sidebar.markdown('<div class="sb-section"><p class="sb-section-title">📅 Tarih Aralığı</p></div>', unsafe_allow_html=True)
-_date_labels = [f"{SUS_DAYS[i]} {SUS_DATES[i]}" for i in range(14)]
+_date_labels = [f"{SUS_DAYS[i]} {SUS_DATES[i]}" for i in range(N_DAYS)]
 _d_start, _d_end = st.sidebar.select_slider(
     "Görüntülenecek tarih aralığı:",
-    options=list(range(14)),
+    options=list(range(N_DAYS)),
     value=(st.session_state.date_start_idx, st.session_state.date_end_idx),
     format_func=lambda x: _date_labels[x],
     key="date_slider"
@@ -670,7 +736,24 @@ _d_start, _d_end = st.sidebar.select_slider(
 st.session_state.date_start_idx = _d_start
 st.session_state.date_end_idx   = _d_end
 DATE_INDICES = list(range(_d_start, _d_end + 1))
-st.sidebar.caption(f"{len(DATE_INDICES)} gün · {SUS_DATES[_d_start]} — {SUS_DATES[_d_end]}")
+st.sidebar.caption(f"{len(DATE_INDICES)} / {N_DAYS} gün · {SUS_DATES[_d_start]} — {SUS_DATES[_d_end]}")
+
+# ── Ufku Uzat ──
+st.sidebar.markdown('<div class="sb-section"><p class="sb-section-title">📐 Planlama Ufku</p></div>', unsafe_allow_html=True)
+st.sidebar.caption(f"Mevcut: {N_DAYS} gün ({SUS_DATES[0]} — {SUS_DATES[-1]})")
+_ext_cols = st.sidebar.columns(4)
+with _ext_cols[0]:
+    if st.button("+1 Gün", use_container_width=True, key="ext_1d"):
+        extend_horizon(1); st.session_state.date_end_idx = len(st.session_state.dyn_dates)-1; st.rerun()
+with _ext_cols[1]:
+    if st.button("+1 Hafta", use_container_width=True, key="ext_1w"):
+        extend_horizon(6); st.session_state.date_end_idx = len(st.session_state.dyn_dates)-1; st.rerun()
+with _ext_cols[2]:
+    if st.button("+1 Ay", use_container_width=True, key="ext_1m"):
+        extend_horizon(26); st.session_state.date_end_idx = len(st.session_state.dyn_dates)-1; st.rerun()
+with _ext_cols[3]:
+    if st.button("+1 Yıl", use_container_width=True, key="ext_1y"):
+        extend_horizon(313); st.session_state.date_end_idx = len(st.session_state.dyn_dates)-1; st.rerun()
 
 # ── Plan Durum Özeti ──
 st.sidebar.markdown('<div class="sb-divider"></div>', unsafe_allow_html=True)
@@ -741,7 +824,7 @@ with tab_panel:
                         if p["type"].startswith("OTD"):
                             applied["otd_daily"][c_k][d_k] = p["new"]
                             if p.get("line"):
-                                al = applied["otd_alloc"].get(p["line"], [""]*14)
+                                al = applied["otd_alloc"].get(p["line"], [""]*N_DAYS)
                                 if d_k < len(al): al[d_k] = c_k
                         elif p["type"].startswith("MD"):
                             applied["md_daily"][c_k][d_k] = p["new"]
@@ -879,9 +962,9 @@ with tab_panel:
                 st.markdown("**🎯 Kart Ataması** — hücreye tıklayın, listeden kart seçin:")
                 edit_data = {}
                 for ln in ["OD0","OD2","OD3","OD4","OD6"]:
-                    row = sus["otd_alloc"].get(ln, [""]*14)
+                    row = sus["otd_alloc"].get(ln, [""]*N_DAYS)
                     if isinstance(row[0], list): row = row[0]
-                    edit_data[ln] = {f"{SUS_DAYS[i]} {SUS_DATES[i]}": (row[i] if i < len(row) else "") for i in range(14)}
+                    edit_data[ln] = {f"{SUS_DAYS[i]} {SUS_DATES[i]}": (row[i] if i < len(row) else "") for i in range(N_DAYS)}
                 df_edit = pd.DataFrame(edit_data).T
                 df_edit.index.name = "Hat"
 
@@ -903,7 +986,7 @@ with tab_panel:
                         _new_alloc = {}
                         for ln in ["OD0","OD2","OD3","OD4","OD6"]:
                             rv = []
-                            for i in range(14):
+                            for i in range(N_DAYS):
                                 cn = f"{SUS_DAYS[i]} {SUS_DATES[i]}"
                                 cell = str(edited_df.loc[ln, cn]).strip() if cn in edited_df.columns else ""
                                 rv.append(cell if cell in SUS_CARDS else "")
@@ -912,11 +995,11 @@ with tab_panel:
                         _new_rates = {}
                         _setups = detect_setup_changes(_new_alloc, sus["otd_alloc"], ["OD0","OD2","OD3","OD4","OD6"])
                         for ln in ["OD0","OD2","OD3","OD4","OD6"]:
-                            old_rates = sus.get("otd_rates", {}).get(ln, [1]*14)
-                            old_alloc_row = sus["otd_alloc"].get(ln, [""]*14)
+                            old_rates = sus.get("otd_rates", {}).get(ln, [1]*N_DAYS)
+                            old_alloc_row = sus["otd_alloc"].get(ln, [""]*N_DAYS)
                             if isinstance(old_alloc_row[0], list): old_alloc_row = old_alloc_row[0]
                             rvals = []
-                            for i in range(14):
+                            for i in range(N_DAYS):
                                 if _new_alloc[ln][i] == (old_alloc_row[i] if i < len(old_alloc_row) else ""):
                                     rvals.append(old_rates[i] if i < len(old_rates) else 1.0)
                                 elif not _new_alloc[ln][i]:
@@ -1418,7 +1501,7 @@ with tab_opt:
                         if p["type"].startswith("OTD"):
                             applied["otd_daily"][c_k][d_k] = p["new"]
                             if p.get("line"):
-                                alloc = applied["otd_alloc"].get(p["line"], [""]*14)
+                                alloc = applied["otd_alloc"].get(p["line"], [""]*N_DAYS)
                                 if d_k < len(alloc): alloc[d_k] = c_k
                         elif p["type"].startswith("MD"):
                             applied["md_daily"][c_k][d_k] = p["new"]
@@ -1447,7 +1530,7 @@ with tab_opt:
                     bc1, bc2 = st.columns(2)
                     with bc1:
                         st.markdown("**Mevcut KSO:**")
-                        old_vals = sus["otd_rem"].get(compare_card, [0]*14)
+                        old_vals = sus["otd_rem"].get(compare_card, [0]*N_DAYS)
                         fig = go.Figure()
                         fig.add_trace(go.Bar(x=SUS_DATES, y=old_vals, name="Mevcut", marker_color=["#ef4444" if v<0 else "#3b82f6" for v in old_vals]))
                         fig.add_hline(y=0, line_dash="dash", line_color="red")
@@ -1455,7 +1538,7 @@ with tab_opt:
                         st.plotly_chart(fig, use_container_width=True)
                     with bc2:
                         st.markdown("**Optimize KSO:**")
-                        new_vals = opt["new_plan"]["otd_rem"].get(compare_card, [0]*14)
+                        new_vals = opt["new_plan"]["otd_rem"].get(compare_card, [0]*N_DAYS)
                         fig2 = go.Figure()
                         fig2.add_trace(go.Bar(x=SUS_DATES, y=new_vals, name="Optimize", marker_color=["#ef4444" if v<0 else "#22c55e" for v in new_vals]))
                         fig2.add_hline(y=0, line_dash="dash", line_color="red")
@@ -1535,7 +1618,7 @@ with tab_veri:
             st.caption("TA üretim miktarlarını güncelleyin.")
             ta_card = st.selectbox("Kart:", SUS_CARDS, key="ta_card")
             st.markdown(f"**Mevcut TA Üretim — {ta_card}:**")
-            current = sus["ta_daily"].get(ta_card, [0]*14)
+            current = sus["ta_daily"].get(ta_card, [0]*N_DAYS)
             cols = st.columns(14)
             new_ta = []
             for i, col in enumerate(cols):
@@ -1580,5 +1663,9 @@ with tab_veri:
                 st.session_state.preview_alloc = None
                 st.session_state.preview_rates = None
                 st.session_state.preview_setups = None
+                st.session_state.dyn_dates = list(_DEFAULT_DATES)
+                st.session_state.dyn_days  = list(_DEFAULT_DAYS)
+                st.session_state.date_start_idx = 0
+                st.session_state.date_end_idx = 13
                 st.success("Tüm veriler varsayılana döndürüldü.")
                 st.rerun()
