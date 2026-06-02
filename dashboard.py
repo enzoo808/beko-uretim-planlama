@@ -429,6 +429,27 @@ st.markdown(f"""<style>
     .sb-stat-label{{font-size:0.72rem;color:#94a3b8;font-weight:500;letter-spacing:0.5px;}}
     .sb-stat-val{{font-size:0.88rem;font-weight:800;color:#93c5fd;}}
     .sb-stat-bad{{color:#f87171!important;}}
+
+    /* ═══ v3.8: Tıklanabilir ihlal stat butonları — sadece primary kind ═══ */
+    section[data-testid="stSidebar"] [data-testid="stButton"] button[kind="primary"]{{
+        background:linear-gradient(90deg,rgba(239,68,68,0.10),rgba(239,68,68,0.04))!important;
+        border:1px solid rgba(239,68,68,0.28)!important;
+        color:#fca5a5!important;
+        font-size:0.78rem!important;font-weight:600!important;
+        padding:10px 14px!important;
+        border-radius:9px!important;
+        text-align:left!important;
+        letter-spacing:0.5px!important;
+        white-space:pre!important;
+        transition:all 0.18s ease!important;
+        box-shadow:none!important;
+    }}
+    section[data-testid="stSidebar"] [data-testid="stButton"] button[kind="primary"]:hover{{
+        background:linear-gradient(90deg,rgba(239,68,68,0.18),rgba(239,68,68,0.08))!important;
+        border-color:rgba(239,68,68,0.5)!important;
+        transform:translateX(2px);
+        color:#fecaca!important;
+    }}
     div[data-testid="stMetric"]{{background:rgba(0,15,50,0.55);border:1px solid rgba(255,255,255,0.1);border-radius:12px;padding:16px;backdrop-filter:blur(12px);-webkit-backdrop-filter:blur(12px);}}
     div[data-testid="stMetric"] label{{color:#93c5fd!important;}}
     div[data-testid="stMetric"] div[data-testid="stMetricValue"]{{color:#fff!important;}}
@@ -842,11 +863,119 @@ _v_otd = sum(1 for c in SUS_CARDS for v in sus["otd_rem"].get(c,[]) if v<0)
 _v_md  = sum(1 for c in SUS_CARDS for v in sus["md_rem"].get(c,[]) if v<0)
 _v_ta  = sum(1 for c in SUS_CARDS for v in sus["ta_rem"].get(c,[]) if v<0)
 _v_all = _v_otd + _v_md + _v_ta
+
+# ═══ v3.8: İhlal Detay Modal Fonksiyonları ═══
+def _render_violation_details(stage_code, rem_key, stage_full, stage_short, next_stage, color):
+    """Belirli bir aşama için ihlal detaylarını gösterir."""
+    s = st.session_state.sus
+    st.markdown(f"""<div style="background:linear-gradient(135deg,{color}22,{color}11);border-left:4px solid {color};padding:14px 18px;border-radius:10px;margin-bottom:16px;">
+        <div style="color:{color};font-size:1.05rem;font-weight:800;letter-spacing:0.5px;">{stage_short} — {stage_full}</div>
+        <div style="color:#cbd5e1;font-size:0.85rem;margin-top:4px;">{stage_short} = "Kalan Stok {stage_code}". Bir günün sonunda {stage_full} aşamasında biriken stok miktarıdır. <strong style="color:#ef4444;">Negatif değer</strong>, o gün sonunda <strong>{next_stage}</strong> aşamasına yeterli üretim aktarılamadığını gösterir — yani montaj hattı duraklayabilir.</div>
+    </div>""", unsafe_allow_html=True)
+
+    viols = []
+    for c in SUS_CARDS:
+        if rem_key == "md_rem" and not PROCESS_MAP.get(c): continue
+        rem = s[rem_key].get(c, [])
+        prev_v = None
+        for i, v in enumerate(rem):
+            if v < 0:
+                # Hat bulma (sadece OTD/MD için anlamlı)
+                hat = "—"
+                if rem_key == "otd_rem":
+                    hat = next((ln for ln in ["OD0","OD2","OD3","OD4","OD6"]
+                                if i < len(s["otd_alloc"].get(ln, []))
+                                and s["otd_alloc"][ln][i] == c), "—")
+                # Açık miktarı artıyor mu (kötüye gidiyor mu)
+                trend = "→"
+                if prev_v is not None:
+                    if v < prev_v: trend = "↓ Kötüleşiyor"
+                    elif v > prev_v: trend = "↑ İyileşiyor"
+                viols.append({
+                    "Kart": c,
+                    "Gün": i+1,
+                    "Tarih": SUS_DATES[i] if i < len(SUS_DATES) else f"G{i+1}",
+                    "Hat": hat,
+                    "Açık": f"{v:,}",
+                    "Trend": trend if i > 0 else "İlk gün"
+                })
+                prev_v = v
+            else:
+                prev_v = v
+
+    if not viols:
+        st.success(f"✅ {stage_short} aşamasında hiç ihlal yok — tampon stoklar pozitif.")
+        return
+
+    # KPI özetler
+    k1, k2, k3 = st.columns(3)
+    with k1: st.metric("Toplam İhlal", f"{len(viols)} gün×kart")
+    with k2: st.metric("Etkilenen Kart", f"{len(set(v['Kart'] for v in viols))}")
+    worst_card = max(set(v["Kart"] for v in viols), key=lambda c: sum(1 for v in viols if v["Kart"]==c))
+    with k3: st.metric("En Çok Etkilenen", worst_card)
+
+    # Detaylı tablo
+    st.markdown("**📋 İhlal Listesi (gün × kart):**")
+    df_v = pd.DataFrame(viols)
+    st.dataframe(df_v, use_container_width=True, hide_index=True, height=min(420, 40+35*len(df_v)))
+
+    # Kart bazında özet
+    st.markdown("**📊 Kart Bazında Toplam Açık:**")
+    by_card = {}
+    for v in viols:
+        c = v["Kart"]
+        # Açık string'den int'e çevir
+        amt = int(v["Açık"].replace(",", ""))
+        by_card[c] = by_card.get(c, 0) + amt
+    by_card_df = pd.DataFrame([{"Kart":c, "Toplam Açık":a, "İhlal Günü":sum(1 for v in viols if v["Kart"]==c)} for c, a in sorted(by_card.items(), key=lambda x:x[1])])
+    st.dataframe(by_card_df, use_container_width=True, hide_index=True)
+
+    # Ne yapılmalı?
+    st.markdown("**💡 Çözüm Önerileri:**")
+    suggestions = []
+    for c in sorted(by_card.keys(), key=lambda x: by_card[x])[:3]:  # en kötü 3 kart
+        amt = abs(by_card[c])
+        if stage_code == "OTD":
+            suggestions.append(f"• **{c}**: OTD hatlarında ek mesai/hat tahsisi ile {amt:,} adet ek üretim gerekli.")
+        elif stage_code == "MD":
+            suggestions.append(f"• **{c}**: MD hattında setup süresini azaltarak veya ek vardiya ile {amt:,} adet üretim eklenebilir.")
+        else:
+            suggestions.append(f"• **{c}**: TA fikstürünün kapasitesi artırılmalı veya farklı fikstüre yönlendirilmeli — {amt:,} adet açık.")
+    for sg in suggestions:
+        st.markdown(sg)
+    st.caption("💬 Detaylı optimize önerileri için ana sayfadaki 'Optimize Et' sekmesini kullanın.")
+
+@st.dialog("KSO — Otomatik Dizgi Sonrası Tampon Stok", width="large")
+def show_kso_dialog():
+    _render_violation_details("OTD", "otd_rem", "Otomatik Dizgi → Manuel Dizgi geçişi", "KSO", "Manuel Dizgi (MD)", "#ef4444")
+
+@st.dialog("KSM — Manuel Dizgi Sonrası Tampon Stok", width="large")
+def show_ksm_dialog():
+    _render_violation_details("MD", "md_rem", "Manuel Dizgi → Test & Ayar geçişi", "KSM", "Test & Ayar (TA)", "#3b82f6")
+
+@st.dialog("KST — Test & Ayar Sonrası Tampon Stok", width="large")
+def show_kst_dialog():
+    _render_violation_details("TA", "ta_rem", "Test & Ayar → Son Montaj geçişi", "KST", "Son Montaj", "#a855f7")
+
+# Tıklanabilir ihlal kartları
+st.sidebar.markdown('<div class="sb-stat-buttons">', unsafe_allow_html=True)
+_kso_label = f"KSO İhlal   ·   {_v_otd}" if _v_otd else "KSO İhlal   ·   ✓"
+_ksm_label = f"KSM İhlal   ·   {_v_md}" if _v_md else "KSM İhlal   ·   ✓"
+_kst_label = f"KST İhlal   ·   {_v_ta}" if _v_ta else "KST İhlal   ·   ✓"
+if st.sidebar.button(_kso_label, key="btn_kso_dlg", use_container_width=True,
+                     type=("primary" if _v_otd else "secondary")):
+    show_kso_dialog()
+if st.sidebar.button(_ksm_label, key="btn_ksm_dlg", use_container_width=True,
+                     type=("primary" if _v_md else "secondary")):
+    show_ksm_dialog()
+if st.sidebar.button(_kst_label, key="btn_kst_dlg", use_container_width=True,
+                     type=("primary" if _v_ta else "secondary")):
+    show_kst_dialog()
+st.sidebar.markdown('</div>', unsafe_allow_html=True)
+
+# Toplam özet kartı (tıklanabilir değil, sadece görsel)
 _stat_cls = "sb-stat-val" if _v_all == 0 else "sb-stat-val sb-stat-bad"
 st.sidebar.markdown(f"""
-<div class="sb-stat"><span class="sb-stat-label">KSO İhlal</span><span class="{'sb-stat-val' if _v_otd==0 else 'sb-stat-val sb-stat-bad'}">{_v_otd if _v_otd else '✓'}</span></div>
-<div class="sb-stat"><span class="sb-stat-label">KSM İhlal</span><span class="{'sb-stat-val' if _v_md==0 else 'sb-stat-val sb-stat-bad'}">{_v_md if _v_md else '✓'}</span></div>
-<div class="sb-stat"><span class="sb-stat-label">KST İhlal</span><span class="{'sb-stat-val' if _v_ta==0 else 'sb-stat-val sb-stat-bad'}">{_v_ta if _v_ta else '✓'}</span></div>
 <div class="sb-stat" style="margin-top:8px;border:1px solid {'rgba(239,68,68,0.3)' if _v_all else 'rgba(34,197,94,0.3)'};background:{'rgba(239,68,68,0.06)' if _v_all else 'rgba(34,197,94,0.06)'};">
     <span class="sb-stat-label" style="font-weight:600;">Toplam</span>
     <span class="{_stat_cls}" style="font-size:1rem;">{'⚠️ ' + str(_v_all) + ' ihlal' if _v_all else '✅ Fizibil'}</span>
