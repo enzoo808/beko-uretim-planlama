@@ -151,6 +151,13 @@ if "ta_preview_active"  not in st.session_state: st.session_state.ta_preview_act
 if "ta_preview_usage"   not in st.session_state: st.session_state.ta_preview_usage   = None
 if "ta_preview_fcount"  not in st.session_state: st.session_state.ta_preview_fcount  = None
 if "ta_preview_percycle" not in st.session_state: st.session_state.ta_preview_percycle = None
+# ═══ Tümünü Optimize Et — onay/önizleme akışı ═══
+if "tumopt_pending"      not in st.session_state: st.session_state.tumopt_pending      = None   # {proposals, message, new_plan_preview}
+if "tumopt_approvals"    not in st.session_state: st.session_state.tumopt_approvals    = {}     # {idx: bool}
+if "tumopt_new_vals"     not in st.session_state: st.session_state.tumopt_new_vals     = {}     # {idx: override_new}
+# ═══ Son uygulama snapshot'ı — Öncesi/Sonrası karşılaştırma için ═══
+if "last_snapshot_before" not in st.session_state: st.session_state.last_snapshot_before = None
+if "last_snapshot_kind"   not in st.session_state: st.session_state.last_snapshot_kind   = None
 
 # ═══ v3.5: Dinamik planlama ufku (URL query param ile kalıcı) ═══
 def _read_horizon_extra_from_qp():
@@ -1363,29 +1370,14 @@ with tab_panel:
     with tb1:
         if st.button("🚀  Tümünü Optimize Et", type="primary", use_container_width=True, key="tum_opt_btn"):
             with st.spinner("Tüm aşamalar analiz ediliyor ve optimize ediliyor…"):
-                result = run_optimization(sus)
-                if result["proposals"]:
-                    applied = copy.deepcopy(sus)
-                    for p in result["proposals"]:
-                        c_k, d_k = p["card"], p["day"]-1
-                        if p["type"].startswith("OTD"):
-                            applied["otd_daily"][c_k][d_k] = p["new"]
-                            if p.get("line"):
-                                al = applied["otd_alloc"].get(p["line"], [""]*N_DAYS)
-                                if d_k < len(al): al[d_k] = c_k
-                        elif p["type"].startswith("MD"):
-                            applied["md_daily"][c_k][d_k] = p["new"]
-                    applied = recalc_stocks(applied)
-                    st.session_state.sus = applied
-                    st.session_state.otd_opt_res = None
-                    st.session_state.md_opt_res  = None
-                    st.session_state.ta_opt_res  = None
-                    st.session_state.preview_active = False
-                    st.session_state.preview_alloc = None
-                    st.success(f"✅ {len(result['proposals'])} değişiklik uygulandı. Stoklar yeniden hesaplandı.")
+                _res = run_optimization(sus)
+                if _res["proposals"]:
+                    st.session_state.tumopt_pending = _res
+                    st.session_state.tumopt_approvals = {i: True for i in range(len(_res["proposals"]))}
+                    st.session_state.tumopt_new_vals  = {}
                     st.rerun()
                 else:
-                    st.success(result["message"])
+                    st.success(_res["message"])
     with tb2:
         def _rozet(opt_res_key, label):
             r = st.session_state.get(opt_res_key)
@@ -1398,6 +1390,191 @@ with tab_panel:
             f'{_rozet("otd_opt_res","OTD")} &nbsp; {_rozet("md_opt_res","MD")} &nbsp; {_rozet("ta_opt_res","TA")}',
             unsafe_allow_html=True
         )
+
+    # ══════════════════════════════════════════════════════════════════
+    # TÜM-OPTIMIZE ONAY / ÖNİZLEME PANELİ
+    # ══════════════════════════════════════════════════════════════════
+    if st.session_state.tumopt_pending is not None:
+        _to = st.session_state.tumopt_pending
+        _proposals = _to.get("proposals", [])
+        _approvals = st.session_state.tumopt_approvals
+        _new_vals  = st.session_state.tumopt_new_vals
+
+        st.markdown("""<div style="background:linear-gradient(135deg,rgba(37,99,235,0.18) 0%,rgba(59,130,246,0.10) 100%);border:2px solid rgba(59,130,246,0.45);border-radius:14px;padding:18px 22px;margin:12px 0;box-shadow:0 6px 24px rgba(37,99,235,0.18);">
+            <div style="display:flex;align-items:center;gap:12px;">
+                <span style="font-size:1.6rem;">🚀</span>
+                <div>
+                    <div style="color:#fff;font-size:1.1rem;font-weight:800;letter-spacing:0.3px;">Tümünü Optimize — Onay Bekliyor</div>
+                    <div style="color:#93c5fd;font-size:0.82rem;margin-top:2px;">Önerileri inceleyin, gerekirse düzenleyin, sonra uygulayın. Onay verilmeden plana yansımaz.</div>
+                </div>
+            </div>
+        </div>""", unsafe_allow_html=True)
+
+        # ── Önizleme planını mevcut onay+override durumuna göre kur ──
+        _applied = copy.deepcopy(sus)
+        for i, p in enumerate(_proposals):
+            if not _approvals.get(i, True):
+                continue
+            c_k, d_k = p["card"], p["day"]-1
+            new_v = _new_vals.get(i, p["new"])
+            if p["type"].startswith("OTD"):
+                _applied["otd_daily"][c_k][d_k] = new_v
+                if p.get("line"):
+                    al = _applied["otd_alloc"].get(p["line"], [""]*N_DAYS)
+                    if d_k < len(al): al[d_k] = c_k
+            elif p["type"].startswith("MD"):
+                _applied["md_daily"][c_k][d_k] = new_v
+        _applied = recalc_stocks(_applied)
+
+        # ── Özet metrikler ──
+        old_v_all = sum(1 for c in SUS_CARDS for rk in ("otd_rem","md_rem","ta_rem")
+                        for v in sus.get(rk,{}).get(c,[]) if v < 0)
+        new_v_all = sum(1 for c in SUS_CARDS for rk in ("otd_rem","md_rem","ta_rem")
+                        for v in _applied.get(rk,{}).get(c,[]) if v < 0)
+        active_n = sum(1 for i in range(len(_proposals)) if _approvals.get(i, True))
+        otd_n = sum(1 for i,p in enumerate(_proposals) if _approvals.get(i,True) and p["type"].startswith("OTD"))
+        md_n  = sum(1 for i,p in enumerate(_proposals) if _approvals.get(i,True) and p["type"].startswith("MD"))
+        ta_n  = sum(1 for i,p in enumerate(_proposals) if _approvals.get(i,True) and p["type"].startswith("TA"))
+
+        mc1, mc2, mc3, mc4, mc5 = st.columns(5)
+        with mc1: st.metric("Aktif Öneri", f"{active_n} / {len(_proposals)}")
+        with mc2: st.metric("OTD / MD / TA", f"{otd_n} / {md_n} / {ta_n}")
+        with mc3: st.metric("İhlal (Önce)", f"{old_v_all}")
+        with mc4: st.metric("İhlal (Sonra)", f"{new_v_all}", delta=f"{new_v_all-old_v_all:+d}", delta_color="inverse")
+        with mc5:
+            if new_v_all == 0:
+                st.metric("Durum", "FİZİBİL ✅")
+            else:
+                st.metric("Kalan İhlal", f"{new_v_all}", delta_color="inverse")
+
+        # ── Eylem butonları ──
+        ab1, ab2, ab3 = st.columns([2, 2, 4])
+        with ab1:
+            if st.button("✅ Onaylananları Uygula", type="primary", use_container_width=True, key="tumopt_apply"):
+                # Snapshot al
+                st.session_state.last_snapshot_before = copy.deepcopy(sus)
+                st.session_state.last_snapshot_kind   = "Tümünü Optimize Et"
+                st.session_state.sus = _applied
+                st.session_state.otd_opt_res = None
+                st.session_state.md_opt_res  = None
+                st.session_state.ta_opt_res  = None
+                st.session_state.preview_active = False
+                st.session_state.preview_alloc = None
+                st.session_state.tumopt_pending = None
+                st.session_state.tumopt_approvals = {}
+                st.session_state.tumopt_new_vals  = {}
+                st.success(f"✅ {active_n} değişiklik uygulandı.")
+                st.rerun()
+        with ab2:
+            if st.button("✗ İptal", use_container_width=True, key="tumopt_cancel"):
+                st.session_state.tumopt_pending = None
+                st.session_state.tumopt_approvals = {}
+                st.session_state.tumopt_new_vals  = {}
+                st.rerun()
+        with ab3:
+            cc1, cc2 = st.columns(2)
+            with cc1:
+                if st.button("Tümünü Onayla", use_container_width=True, key="tumopt_all_on"):
+                    st.session_state.tumopt_approvals = {i: True for i in range(len(_proposals))}
+                    st.rerun()
+            with cc2:
+                if st.button("Tümünü Reddet", use_container_width=True, key="tumopt_all_off"):
+                    st.session_state.tumopt_approvals = {i: False for i in range(len(_proposals))}
+                    st.rerun()
+
+        # ── Öneri listesi (her satır düzenlenebilir + checkbox) ──
+        with st.expander(f"📋 Öneri Listesi ({len(_proposals)} kayıt) — onayla / düzenle", expanded=True):
+            for i, p in enumerate(_proposals):
+                rc1, rc2, rc3 = st.columns([6, 1.4, 0.6])
+                with rc1:
+                    icon = "🟢" if p["type"].startswith("OTD") else "🔵" if p["type"].startswith("MD") else "🟣"
+                    cur_new = _new_vals.get(i, p["new"])
+                    delta_v = cur_new - p["old"]
+                    st.markdown(
+                        f'<div style="padding:6px 10px;border-radius:6px;background:rgba(0,15,50,0.35);border:1px solid rgba(147,197,253,0.10);">'
+                        f'<span style="color:#fff;font-weight:600;">{icon} {p["type"]} — <strong>{p["card"]}</strong> | Gün {p["day"]} ({p["date"]}) | Hat: {p.get("line","—")}</span>'
+                        f'<br><span style="color:#93c5fd;font-size:0.78rem;">📌 {p["reason"]}</span>'
+                        f'<br><span style="color:#cbd5e1;font-size:0.8rem;">{p["old"]:,} → <strong style="color:#22c55e;">{cur_new:,}</strong> ({delta_v:+,})</span>'
+                        f'</div>',
+                        unsafe_allow_html=True
+                    )
+                with rc2:
+                    nv = st.number_input(
+                        f"Yeni #{i}", value=int(_new_vals.get(i, p["new"])),
+                        min_value=0, step=10, key=f"tumopt_nv_{i}", label_visibility="collapsed"
+                    )
+                    if nv != _new_vals.get(i, p["new"]):
+                        st.session_state.tumopt_new_vals[i] = nv
+                        st.rerun()
+                with rc3:
+                    chk = st.checkbox("✓", value=_approvals.get(i, True), key=f"tumopt_chk_{i}")
+                    if chk != _approvals.get(i, True):
+                        st.session_state.tumopt_approvals[i] = chk
+                        st.rerun()
+
+        # ── Etki tablosu (kart bazlı önce/sonra) ──
+        with st.expander("📊 Stok Etki Önizlemesi (Önce / Sonra)", expanded=False):
+            impact_pre = compute_manual_impact(sus, _applied)
+            if impact_pre["changes"]:
+                idf = pd.DataFrame(impact_pre["changes"])
+                idf = idf.rename(columns={"card":"Kart","stage":"Aşama","day":"Gün","date":"Tarih","old":"Önce","new":"Sonra","diff":"Fark","status":"Durum"})
+                idf["Durum"] = idf["Durum"].map({"fixed":"✅ Çözüldü","new_violation":"❌ Yeni İhlal","changed":"🔄 Değişti"})
+                st.dataframe(idf[["Kart","Aşama","Gün","Tarih","Önce","Sonra","Fark","Durum"]], use_container_width=True, hide_index=True, height=min(420, 40+35*len(idf)))
+            else:
+                st.info("Henüz onaylı değişiklik yok — yukarıdan önerileri seçin.")
+
+    # ══════════════════════════════════════════════════════════════════
+    # SON UYGULAMA — Öncesi/Sonrası Karşılaştırma (snapshot varsa)
+    # ══════════════════════════════════════════════════════════════════
+    if st.session_state.last_snapshot_before is not None:
+        snap = st.session_state.last_snapshot_before
+        snap_kind = st.session_state.last_snapshot_kind or "Son Uygulama"
+        old_viol_o = sum(1 for c in SUS_CARDS for v in snap["otd_rem"].get(c,[]) if v<0)
+        old_viol_m = sum(1 for c in SUS_CARDS for v in snap["md_rem"].get(c,[]) if v<0)
+        old_viol_t = sum(1 for c in SUS_CARDS for v in snap["ta_rem"].get(c,[]) if v<0)
+        new_viol_o = sum(1 for c in SUS_CARDS for v in sus["otd_rem"].get(c,[]) if v<0)
+        new_viol_m = sum(1 for c in SUS_CARDS for v in sus["md_rem"].get(c,[]) if v<0)
+        new_viol_t = sum(1 for c in SUS_CARDS for v in sus["ta_rem"].get(c,[]) if v<0)
+        delta_total = (new_viol_o+new_viol_m+new_viol_t) - (old_viol_o+old_viol_m+old_viol_t)
+
+        header_clr = "#22c55e" if delta_total < 0 else "#f59e0b" if delta_total == 0 else "#ef4444"
+        header_txt = "📉 İhlaller Azaldı" if delta_total < 0 else "⚠️ İhlal Sayısı Aynı" if delta_total == 0 else "📈 İhlaller Arttı"
+
+        with st.expander(f"🆚 Son Uygulama Karşılaştırması — {snap_kind}  ·  {header_txt}", expanded=False):
+            sc1, sc2, sc3, sc4 = st.columns(4)
+            with sc1: st.metric("KSO İhlali", f"{new_viol_o}", delta=f"{new_viol_o-old_viol_o:+d}", delta_color="inverse")
+            with sc2: st.metric("KSM İhlali", f"{new_viol_m}", delta=f"{new_viol_m-old_viol_m:+d}", delta_color="inverse")
+            with sc3: st.metric("KST İhlali", f"{new_viol_t}", delta=f"{new_viol_t-old_viol_t:+d}", delta_color="inverse")
+            with sc4:
+                if st.button("🗑️ Snapshot'ı Temizle", use_container_width=True, key="clear_snap"):
+                    st.session_state.last_snapshot_before = None
+                    st.session_state.last_snapshot_kind = None
+                    st.rerun()
+
+            snap_card = st.selectbox("Karşılaştırılacak kart:", SUS_CARDS, key="snap_card_sel")
+            snap_stage = st.radio("Aşama:", ["KSO","KSM","KST"], horizontal=True, key="snap_stage_sel")
+            stage_key = {"KSO":"otd_rem","KSM":"md_rem","KST":"ta_rem"}[snap_stage]
+            old_vals = snap[stage_key].get(snap_card, [0]*N_DAYS)
+            new_vals = sus[stage_key].get(snap_card, [0]*N_DAYS)
+
+            bc1, bc2 = st.columns(2)
+            with bc1:
+                st.markdown(f"**{snap_stage} — Önce**")
+                fig1 = go.Figure()
+                fig1.add_trace(go.Bar(x=SUS_DATES, y=old_vals, marker_color=["#ef4444" if v<0 else "#64748b" for v in old_vals]))
+                fig1.add_hline(y=0, line_dash="dash", line_color="red")
+                fig1.update_layout(template="plotly_dark", height=260, margin=dict(l=30,r=10,t=10,b=30),
+                                   paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(255,255,255,0.03)")
+                st.plotly_chart(fig1, use_container_width=True)
+            with bc2:
+                st.markdown(f"**{snap_stage} — Sonra**")
+                fig2 = go.Figure()
+                fig2.add_trace(go.Bar(x=SUS_DATES, y=new_vals, marker_color=["#ef4444" if v<0 else "#22c55e" for v in new_vals]))
+                fig2.add_hline(y=0, line_dash="dash", line_color="red")
+                fig2.update_layout(template="plotly_dark", height=260, margin=dict(l=30,r=10,t=10,b=30),
+                                   paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(255,255,255,0.03)")
+                st.plotly_chart(fig2, use_container_width=True)
+
     st.write("---")
 
     # ==================================================================
@@ -1661,6 +1838,8 @@ with tab_panel:
                     st.write("---")
                     if st.session_state.auth:
                         if st.button("✅ Alokasyonu Uygula", type="primary", use_container_width=True, key="btn_apply_final"):
+                            st.session_state.last_snapshot_before = copy.deepcopy(st.session_state.sus)
+                            st.session_state.last_snapshot_kind = "OTD Manuel"
                             st.session_state.sus = preview_plan
                             st.session_state.otd_opt_res = None
                             st.session_state.manual_impact = impact
@@ -1683,6 +1862,8 @@ with tab_panel:
                                 if apply_sicil.strip() in YETKILI_SICILLER:
                                     st.session_state.auth = True
                                     st.session_state.auth_sicil = apply_sicil.strip()
+                                    st.session_state.last_snapshot_before = copy.deepcopy(st.session_state.sus)
+                                    st.session_state.last_snapshot_kind = "OTD Manuel"
                                     st.session_state.sus = preview_plan
                                     st.session_state.otd_opt_res = None
                                     st.session_state.manual_impact = impact
@@ -1744,6 +1925,8 @@ with tab_panel:
                         if st.button("✅ Seçilen OTD Değişikliklerini Uygula",
                                      type="primary", use_container_width=True, key="otd_apply_btn"):
                             applied_plan, cnt = apply_stage_proposals(proposals, sus, "OTD", approvals_otd)
+                            st.session_state.last_snapshot_before = copy.deepcopy(st.session_state.sus)
+                            st.session_state.last_snapshot_kind = "OTD Optimize"
                             st.session_state.sus = applied_plan
                             st.session_state.otd_opt_res = None
                             st.success(f"✅ {cnt} OTD değişikliği uygulandı.")
@@ -2017,6 +2200,8 @@ with tab_panel:
                     st.write("---")
                     if st.session_state.auth:
                         if st.button("✅ MD Alokasyonu Uygula", type="primary", use_container_width=True, key="btn_md_apply_final"):
+                            st.session_state.last_snapshot_before = copy.deepcopy(st.session_state.sus)
+                            st.session_state.last_snapshot_kind = "MD Manuel"
                             st.session_state.sus = preview_plan
                             st.session_state.md_opt_res = None
                             st.session_state.md_preview_active = False
@@ -2037,6 +2222,8 @@ with tab_panel:
                                 if apply_sicil_md.strip() in YETKILI_SICILLER:
                                     st.session_state.auth = True
                                     st.session_state.auth_sicil = apply_sicil_md.strip()
+                                    st.session_state.last_snapshot_before = copy.deepcopy(st.session_state.sus)
+                                    st.session_state.last_snapshot_kind = "MD Manuel"
                                     st.session_state.sus = preview_plan
                                     st.session_state.md_opt_res = None
                                     st.session_state.md_preview_active = False
@@ -2093,6 +2280,8 @@ with tab_panel:
                         if st.button("✅ Seçilen MD Değişikliklerini Uygula",
                                      type="primary", use_container_width=True, key="md_apply_btn"):
                             applied_plan, cnt = apply_stage_proposals(proposals, sus, "MD", approvals_md)
+                            st.session_state.last_snapshot_before = copy.deepcopy(st.session_state.sus)
+                            st.session_state.last_snapshot_kind = "MD Optimize"
                             st.session_state.sus = applied_plan
                             st.session_state.md_opt_res = None
                             st.success(f"✅ {cnt} MD değişikliği uygulandı.")
@@ -2305,6 +2494,8 @@ with tab_panel:
                     st.write("---")
                     if st.session_state.auth:
                         if st.button("✅ TA Fikstür Kullanımını Uygula", type="primary", use_container_width=True, key="btn_ta_apply_final"):
+                            st.session_state.last_snapshot_before = copy.deepcopy(st.session_state.sus)
+                            st.session_state.last_snapshot_kind = "TA Manuel"
                             st.session_state.sus = preview_plan
                             st.session_state.ta_opt_res = None
                             st.session_state.ta_preview_active = False
@@ -2323,6 +2514,8 @@ with tab_panel:
                                 if apply_sicil_ta.strip() in YETKILI_SICILLER:
                                     st.session_state.auth = True
                                     st.session_state.auth_sicil = apply_sicil_ta.strip()
+                                    st.session_state.last_snapshot_before = copy.deepcopy(st.session_state.sus)
+                                    st.session_state.last_snapshot_kind = "TA Manuel"
                                     st.session_state.sus = preview_plan
                                     st.session_state.ta_opt_res = None
                                     st.session_state.ta_preview_active = False
@@ -2372,6 +2565,8 @@ with tab_panel:
                         if st.button("✅ Seçilen TA Değişikliklerini Uygula",
                                      type="primary", use_container_width=True, key="ta_apply_btn"):
                             applied_plan, cnt = apply_stage_proposals(proposals, sus, "TA", approvals_ta)
+                            st.session_state.last_snapshot_before = copy.deepcopy(st.session_state.sus)
+                            st.session_state.last_snapshot_kind = "TA Optimize"
                             st.session_state.sus = applied_plan
                             st.session_state.ta_opt_res = None
                             st.success(f"✅ {cnt} TA değişikliği uygulandı.")
