@@ -152,9 +152,85 @@ if "ta_preview_usage"   not in st.session_state: st.session_state.ta_preview_usa
 if "ta_preview_fcount"  not in st.session_state: st.session_state.ta_preview_fcount  = None
 if "ta_preview_percycle" not in st.session_state: st.session_state.ta_preview_percycle = None
 
-# ═══ v3.5: Dinamik planlama ufku ═══
-if "dyn_dates" not in st.session_state: st.session_state.dyn_dates = list(_DEFAULT_DATES)
+# ═══ v3.5: Dinamik planlama ufku (URL query param ile kalıcı) ═══
+def _read_horizon_extra_from_qp():
+    """URL ?ext=N parametresinden ek gün sayısını oku (F5 sonrası kalıcılık)."""
+    try:
+        v = st.query_params.get("ext", None)
+        if v is None: return 0
+        if isinstance(v, list): v = v[0] if v else "0"
+        return max(0, min(int(v), 400))
+    except Exception:
+        return 0
+
+def _persist_horizon_to_qp():
+    """Mevcut ek gün sayısını URL query param'a yaz."""
+    try:
+        extra = len(st.session_state.dyn_dates) - len(_DEFAULT_DATES)
+        if extra > 0:
+            st.query_params["ext"] = str(extra)
+        else:
+            if "ext" in st.query_params:
+                del st.query_params["ext"]
+    except Exception:
+        pass
+
+def _build_horizon_lists(extra_days):
+    """Default + extra gün eklenerek (Pazar atlanır) tarih/gün listeleri kurar."""
+    dates = list(_DEFAULT_DATES)
+    days  = list(_DEFAULT_DAYS)
+    if extra_days <= 0:
+        return dates, days
+    last_str = dates[-1]
+    dd, mm = int(last_str[:2]), int(last_str[3:])
+    last_dt = datetime(2026, mm, dd)
+    added = 0
+    while added < extra_days:
+        last_dt += timedelta(days=1)
+        if last_dt.weekday() == 6: continue
+        dates.append(last_dt.strftime("%d.%m"))
+        days.append(_TR_DAYS[last_dt.weekday()])
+        added += 1
+    return dates, days
+
+if "dyn_dates" not in st.session_state:
+    _extra = _read_horizon_extra_from_qp()
+    _d, _dy = _build_horizon_lists(_extra)
+    st.session_state.dyn_dates = _d
+    st.session_state.dyn_days  = _dy
 if "dyn_days"  not in st.session_state: st.session_state.dyn_days  = list(_DEFAULT_DAYS)
+# Bekleyen ufku değişikliği (sicil onayı için)
+if "pending_horizon" not in st.session_state: st.session_state.pending_horizon = 0
+
+# Query param'dan gelen uzun ufuk için sus arrays'lerini pad'le
+_nd_now = len(st.session_state.dyn_dates)
+if _nd_now > len(_DEFAULT_DATES):
+    # Slider sonunu da uzat (F5 sonrası daraltmasın)
+    if st.session_state.get("date_end_idx", 13) < _nd_now - 1:
+        st.session_state.date_end_idx = _nd_now - 1
+    _s = st.session_state.sus
+    for _key in ("otd_daily","otd_rem","md_daily","md_rem","ta_daily","ta_rem","assembly","ta_fixture_usage"):
+        for _c in SUS_CARDS:
+            _arr = _s.get(_key, {}).get(_c, [])
+            if len(_arr) < _nd_now: _s[_key][_c] = _arr + [0] * (_nd_now - len(_arr))
+    for _ln in _s.get("otd_alloc", {}):
+        _a = _s["otd_alloc"][_ln]
+        if isinstance(_a[0], list):
+            for _row in _a:
+                if len(_row) < _nd_now: _row.extend([""] * (_nd_now - len(_row)))
+        elif len(_a) < _nd_now:
+            _s["otd_alloc"][_ln] = _a + [""] * (_nd_now - len(_a))
+    for _ln in _s.get("md_alloc", {}):
+        for _row in _s["md_alloc"][_ln]:
+            if isinstance(_row, list) and len(_row) < _nd_now:
+                _row.extend([""] * (_nd_now - len(_row)))
+    for _ln in _s.get("otd_rates", {}):
+        _a = _s["otd_rates"][_ln]
+        if len(_a) < _nd_now: _s["otd_rates"][_ln] = _a + [1.0] * (_nd_now - len(_a))
+    for _ln in _s.get("md_rates", {}):
+        for _row in _s["md_rates"][_ln]:
+            if isinstance(_row, list) and len(_row) < _nd_now:
+                _row.extend([1.0] * (_nd_now - len(_row)))
 
 # Modül seviyesinde referans — tüm fonksiyonlar bunları kullanır
 SUS_DATES = st.session_state.dyn_dates
@@ -977,22 +1053,128 @@ st.session_state.date_end_idx   = _d_end
 DATE_INDICES = list(range(_d_start, _d_end + 1))
 st.sidebar.caption(f"{len(DATE_INDICES)} / {N_DAYS} gün · {SUS_DATES[_d_start]} — {SUS_DATES[_d_end]}")
 
-# ── Ufku Uzat ──
+# ── Ufku Uzat (sicil onaylı + kalıcı) ──
 st.sidebar.markdown('<div class="sb-section"><p class="sb-section-title">📐 Planlama Ufku</p></div>', unsafe_allow_html=True)
 st.sidebar.caption(f"Mevcut: {N_DAYS} gün ({SUS_DATES[0]} — {SUS_DATES[-1]})")
 _ext_cols = st.sidebar.columns(4)
 with _ext_cols[0]:
     if st.button("+1 Gün", use_container_width=True, key="ext_1d"):
-        extend_horizon(1); st.session_state.date_end_idx = len(st.session_state.dyn_dates)-1; st.rerun()
+        st.session_state.pending_horizon = 1; st.rerun()
 with _ext_cols[1]:
     if st.button("+1 Hafta", use_container_width=True, key="ext_1w"):
-        extend_horizon(6); st.session_state.date_end_idx = len(st.session_state.dyn_dates)-1; st.rerun()
+        st.session_state.pending_horizon = 6; st.rerun()
 with _ext_cols[2]:
     if st.button("+1 Ay", use_container_width=True, key="ext_1m"):
-        extend_horizon(26); st.session_state.date_end_idx = len(st.session_state.dyn_dates)-1; st.rerun()
+        st.session_state.pending_horizon = 26; st.rerun()
 with _ext_cols[3]:
     if st.button("+1 Yıl", use_container_width=True, key="ext_1y"):
-        extend_horizon(313); st.session_state.date_end_idx = len(st.session_state.dyn_dates)-1; st.rerun()
+        st.session_state.pending_horizon = 313; st.rerun()
+
+# Sıfırla butonu
+if N_DAYS > len(_DEFAULT_DATES):
+    if st.sidebar.button("🔄 Varsayılana Sıfırla (14 gün)", use_container_width=True, key="ext_reset"):
+        st.session_state.pending_horizon = -1; st.rerun()
+
+# Sicil onayı paneli
+if st.session_state.pending_horizon != 0:
+    ph = st.session_state.pending_horizon
+    if ph > 0:
+        ph_label = f"+{ph} gün eklenecek"
+    else:
+        ph_label = "Varsayılana (14 gün) sıfırlanacak"
+    st.sidebar.markdown(f"""<div style="background:rgba(245,158,11,0.15);border:1px solid rgba(245,158,11,0.4);border-radius:8px;padding:10px 12px;margin-top:8px;">
+        <div style="color:#fbbf24;font-weight:700;font-size:0.82rem;">⏳ Onay Bekleniyor</div>
+        <div style="color:#cbd5e1;font-size:0.78rem;margin-top:3px;">{ph_label}</div>
+        <div style="color:#94a3b8;font-size:0.72rem;margin-top:2px;">Değişiklik kalıcı olacak (F5 sonrası korunur).</div>
+    </div>""", unsafe_allow_html=True)
+    if st.session_state.auth:
+        cap1, cap2 = st.sidebar.columns(2)
+        with cap1:
+            if st.button("✅ Uygula", type="primary", use_container_width=True, key="ph_apply_authed"):
+                if ph == -1:
+                    # Sıfırla
+                    st.session_state.dyn_dates = list(_DEFAULT_DATES)
+                    st.session_state.dyn_days  = list(_DEFAULT_DAYS)
+                    # SUS arrays'leri 14'e kırp
+                    nd = len(_DEFAULT_DATES)
+                    for key in ["otd_daily","otd_rem","md_daily","md_rem","ta_daily","ta_rem","assembly","ta_fixture_usage"]:
+                        for c in SUS_CARDS:
+                            arr = st.session_state.sus.get(key, {}).get(c, [])
+                            if len(arr) > nd: st.session_state.sus[key][c] = arr[:nd]
+                    for ln in st.session_state.sus.get("otd_alloc", {}):
+                        arr = st.session_state.sus["otd_alloc"][ln]
+                        if isinstance(arr[0], list):
+                            for row in arr:
+                                if len(row) > nd: row[:] = row[:nd]
+                        elif len(arr) > nd:
+                            st.session_state.sus["otd_alloc"][ln] = arr[:nd]
+                    for ln in st.session_state.sus.get("md_alloc", {}):
+                        for row in st.session_state.sus["md_alloc"][ln]:
+                            if isinstance(row, list) and len(row) > nd: row[:] = row[:nd]
+                    for ln in st.session_state.sus.get("otd_rates", {}):
+                        arr = st.session_state.sus["otd_rates"][ln]
+                        if len(arr) > nd: st.session_state.sus["otd_rates"][ln] = arr[:nd]
+                    for ln in st.session_state.sus.get("md_rates", {}):
+                        for row in st.session_state.sus["md_rates"][ln]:
+                            if isinstance(row, list) and len(row) > nd: row[:] = row[:nd]
+                    st.session_state.sus = recalc_stocks(st.session_state.sus)
+                    st.session_state.date_end_idx = nd - 1
+                else:
+                    extend_horizon(ph)
+                    st.session_state.date_end_idx = len(st.session_state.dyn_dates) - 1
+                _persist_horizon_to_qp()
+                st.session_state.pending_horizon = 0
+                st.success(f"✅ Ufku güncellendi (Sicil: {st.session_state.auth_sicil})")
+                st.rerun()
+        with cap2:
+            if st.button("✗ Vazgeç", use_container_width=True, key="ph_cancel_authed"):
+                st.session_state.pending_horizon = 0; st.rerun()
+    else:
+        _ph_sicil = st.sidebar.text_input("Sicil:", type="password", placeholder="Sicil numaranız", key="ph_sicil_input", label_visibility="collapsed")
+        cap1, cap2 = st.sidebar.columns(2)
+        with cap1:
+            if st.button("🔓 Doğrula & Uygula", type="primary", use_container_width=True, key="ph_sicil_apply"):
+                if _ph_sicil.strip() in YETKILI_SICILLER:
+                    st.session_state.auth = True
+                    st.session_state.auth_sicil = _ph_sicil.strip()
+                    if ph == -1:
+                        st.session_state.dyn_dates = list(_DEFAULT_DATES)
+                        st.session_state.dyn_days  = list(_DEFAULT_DAYS)
+                        nd = len(_DEFAULT_DATES)
+                        for key in ["otd_daily","otd_rem","md_daily","md_rem","ta_daily","ta_rem","assembly","ta_fixture_usage"]:
+                            for c in SUS_CARDS:
+                                arr = st.session_state.sus.get(key, {}).get(c, [])
+                                if len(arr) > nd: st.session_state.sus[key][c] = arr[:nd]
+                        for ln in st.session_state.sus.get("otd_alloc", {}):
+                            arr = st.session_state.sus["otd_alloc"][ln]
+                            if isinstance(arr[0], list):
+                                for row in arr:
+                                    if len(row) > nd: row[:] = row[:nd]
+                            elif len(arr) > nd:
+                                st.session_state.sus["otd_alloc"][ln] = arr[:nd]
+                        for ln in st.session_state.sus.get("md_alloc", {}):
+                            for row in st.session_state.sus["md_alloc"][ln]:
+                                if isinstance(row, list) and len(row) > nd: row[:] = row[:nd]
+                        for ln in st.session_state.sus.get("otd_rates", {}):
+                            arr = st.session_state.sus["otd_rates"][ln]
+                            if len(arr) > nd: st.session_state.sus["otd_rates"][ln] = arr[:nd]
+                        for ln in st.session_state.sus.get("md_rates", {}):
+                            for row in st.session_state.sus["md_rates"][ln]:
+                                if isinstance(row, list) and len(row) > nd: row[:] = row[:nd]
+                        st.session_state.sus = recalc_stocks(st.session_state.sus)
+                        st.session_state.date_end_idx = nd - 1
+                    else:
+                        extend_horizon(ph)
+                        st.session_state.date_end_idx = len(st.session_state.dyn_dates) - 1
+                    _persist_horizon_to_qp()
+                    st.session_state.pending_horizon = 0
+                    st.success(f"✅ Yetkilendirildi & uygulandı (Sicil: {_ph_sicil.strip()})")
+                    st.rerun()
+                else:
+                    st.error("❌ Yetkisiz sicil.")
+        with cap2:
+            if st.button("✗ Vazgeç", use_container_width=True, key="ph_sicil_cancel"):
+                st.session_state.pending_horizon = 0; st.rerun()
 
 # ── Plan Durum Özeti ──
 st.sidebar.markdown('<div class="sb-divider"></div>', unsafe_allow_html=True)
@@ -1131,14 +1313,22 @@ if st.session_state.auth:
 # =====================================================================
 # SEKMELER (sayfa başına taşındı, emojiler kaldırıldı)
 # =====================================================================
-# ── Üst marka banner'ı (büyük, sayfanın en üstünde) ──
-_lh_big = f'<img src="data:image/png;base64,{logo_b64}" style="height:54px;margin-left:18px;filter:drop-shadow(0 3px 10px rgba(37,99,235,0.5));">' if logo_b64 else ""
-st.markdown(f"""<div style="display:flex;align-items:center;justify-content:flex-end;margin:0 0 18px;padding:18px 26px;background:linear-gradient(90deg,rgba(2,10,31,0.85) 0%,rgba(4,18,46,0.95) 50%,rgba(2,10,31,0.85) 100%);border-radius:14px;backdrop-filter:blur(14px);border:1px solid rgba(147,197,253,0.18);box-shadow:0 4px 24px rgba(0,0,0,0.35);">
-    <div style="text-align:right;">
-        <div style="color:#fff;font-size:1.6rem;font-weight:800;letter-spacing:0.5px;line-height:1.1;">Çerkezköy Elektronik</div>
-        <div style="color:#93c5fd;font-size:0.82rem;letter-spacing:3px;text-transform:uppercase;font-weight:600;margin-top:4px;">Şasi → Montaj Planlama Sistemi</div>
-    </div>
+# ── Üst marka banner'ı (sol hizalı, estetik) ──
+_lh_big = f'<img src="data:image/png;base64,{logo_b64}" style="height:46px;margin-right:18px;filter:drop-shadow(0 3px 10px rgba(37,99,235,0.5));">' if logo_b64 else ""
+st.markdown(f"""<div style="display:flex;align-items:center;justify-content:flex-start;gap:6px;margin:0 0 18px;padding:18px 28px;background:linear-gradient(135deg,rgba(2,10,31,0.92) 0%,rgba(8,24,58,0.88) 35%,rgba(15,40,90,0.80) 100%);border-radius:14px;backdrop-filter:blur(14px);border:1px solid rgba(147,197,253,0.18);box-shadow:0 4px 28px rgba(0,0,0,0.4),inset 0 1px 0 rgba(147,197,253,0.08);position:relative;overflow:hidden;">
+    <div style="position:absolute;left:0;top:0;bottom:0;width:4px;background:linear-gradient(180deg,#3b82f6,#1d4ed8);border-radius:14px 0 0 14px;"></div>
     {_lh_big}
+    <div style="text-align:left;flex-grow:1;">
+        <div style="color:#fff;font-size:1.55rem;font-weight:800;letter-spacing:0.5px;line-height:1.1;text-shadow:0 2px 8px rgba(0,0,0,0.4);">Çerkezköy Elektronik</div>
+        <div style="color:#93c5fd;font-size:0.78rem;letter-spacing:3px;text-transform:uppercase;font-weight:600;margin-top:6px;">Şasi → Montaj Planlama Sistemi</div>
+    </div>
+    <div style="display:flex;flex-direction:column;align-items:flex-end;gap:4px;">
+        <div style="color:#94a3b8;font-size:0.7rem;letter-spacing:1.5px;text-transform:uppercase;font-weight:600;">Karar Destek Sistemi</div>
+        <div style="display:flex;gap:6px;">
+            <div style="width:6px;height:6px;border-radius:50%;background:#22c55e;box-shadow:0 0 8px rgba(34,197,94,0.6);"></div>
+            <span style="color:#86efac;font-size:0.7rem;font-weight:600;">Aktif</span>
+        </div>
+    </div>
 </div>""", unsafe_allow_html=True)
 
 tab_panel, tab_montaj, tab_opt, tab_rapor, tab_veri = st.tabs(
@@ -1213,7 +1403,7 @@ with tab_panel:
     # ==================================================================
     # OTD EXPANDER
     # ==================================================================
-    with st.expander("⚡ OTD — Otomatik Dizgi (Hat Alokasyonu & Üretim & Stok)", expanded=True):
+    with st.expander("⚡ OTD — Otomatik Dizgi (Hat Alokasyonu & Üretim & Stok)", expanded=False):
 
         # ── Kontrol satırı ──
         hc1, hc2, hc3, hc4 = st.columns([3, 1, 2, 2])
