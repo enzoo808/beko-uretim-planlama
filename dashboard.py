@@ -33,13 +33,31 @@ PROCESS_MAP = {"F4":True,"GB":True,"GL":True,"GX":False,"LG":False,"MR":True,"V1
 
 _TR_DAYS = {0:"Pzt",1:"Sal",2:"Çar",3:"Perş",4:"Cum",5:"Cmt",6:"Paz"}
 
+# ═══ OTD Hatları (sıralı, tek kaynak) ═══
+OTD_LINES = ["OD0","OD2","OD3","OD4","OD5","OD6"]
+
 TEMPO = {
     "OD0":{"F4":100,"GX":800,"V1":1000,"XGB":927,"XGS":1040,"Y3":880,"Y4":850},
     "OD2":{"F4":200,"GX":700,"LG":450,"V1":1150,"XC":1140,"XD":770,"XGB":880,"XGS":1000,"XR":610,"Y3":920,"Y4":850},
     "OD3":{"V1":1150,"XC":1140,"XD":770,"XGB":880,"XGS":1000,"XR":610,"Y3":920,"Y4":850},
     "OD4":{"F4":500,"LG":550,"V1":0,"XGB":700,"XGS":750},
+    "OD5":{"F4":300,"GB":500,"GL":540,"MR":450,"V1":700},
     "OD6":{"F4":400,"GB":700,"GL":750,"Y3":870,"Y4":750},
 }
+
+# ═══ Setup Loss Matrisi (slot1 → slot2 ve günler-arası geçişlerde) ═══
+# Varsayılan: %50 kayıp. İstisna: XC↔XR setup'sız.
+# Kullanıcı yeni istisna verirse buraya eklenir.
+SETUP_LOSS_DEFAULT = 0.50
+SETUP_EXCEPTIONS = {
+    ("XC","XR"): 0.0,
+    ("XR","XC"): 0.0,
+}
+def setup_loss(c1, c2):
+    """İki kart arasındaki setup kayıp oranı (0.0–1.0). Aynı kart → 0."""
+    if not c1 or not c2 or c1 == c2:
+        return 0.0
+    return SETUP_EXCEPTIONS.get((c1, c2), SETUP_LOSS_DEFAULT)
 MD_TEMPO = {"MD1":{"XGS":1100,"XGB":950,"Y4":1000,"F4":0,"GB":800,"GL":780,"MR":600,"V1":1000,"Y3":890},
             "MD2":{"XGS":1100,"XGB":950,"Y4":1000,"F4":0,"GB":800,"GL":780,"MR":600,"V1":1000,"Y3":890}}
 
@@ -59,8 +77,13 @@ TA_TEST_SYS = {"F4":"TESTAR","GB":"TESTAR","GL":"TESTAR","GX":"IPTE","LG":"LG","
 # =====================================================================
 def get_default_sus():
     return {
-        "otd_alloc":{"OD0":["XGS","XGS","XGB","XGS","XGS","XGS","XGS","XGS","XGS","XGS","XGS","XGS","",""],"OD2":["XGB","LG","LG","LG","XC","XGS","LG","LG","LG","LG","XGS","XGS","XGS","XGS"],"OD3":["XC","XC","XR","XR","XR","XR","XR","XR","XR","XC","XC","","",""],"OD4":["LG","LG","LG","LG","LG","LG","LG","LG","LG","","","","",""],"OD6":["Y4","Y4","","","","","","","","","","","",""]},
-        "otd_rates":{"OD0":[1,1,1,1,1,1,1,1,1,1,1,1,1,1],"OD2":[1,.3,.7,1,.5,1,1,1,1,1,1,1,1,1],"OD3":[1,1,1,1,1,1,1,1,1,1,1,1,1,1],"OD4":[1,1,.5,1,1,1,.5,1,1,1,.5,1,1,1],"OD6":[1,1,1,1,1,1,1,1,1,1,1,1,1,1]},
+        "otd_alloc":{"OD0":["XGS","XGS","XGB","XGS","XGS","XGS","XGS","XGS","XGS","XGS","XGS","XGS","",""],"OD2":["XGB","LG","LG","LG","XC","XGS","LG","LG","LG","LG","XGS","XGS","XGS","XGS"],"OD3":["XC","XC","XR","XR","XR","XR","XR","XR","XR","XC","XC","","",""],"OD4":["LG","LG","LG","LG","LG","LG","LG","LG","LG","","","","",""],"OD5":["","","","","","","","","","","","","",""],"OD6":["Y4","Y4","","","","","","","","","","","",""]},
+        # ═══ Slot 2 (yeni — gün-içi 2. kart; boş "" = sadece slot1 çalışıyor) ═══
+        "otd_alloc2":{"OD0":[""]*14,"OD2":[""]*14,"OD3":[""]*14,"OD4":[""]*14,"OD5":[""]*14,"OD6":[""]*14},
+        # ═══ Slot Üretim Payları (f1, f2) ═══
+        # slot2 boşsa (f1=1.0, f2=0.0). Dolu ise: f1 + f2 + setup_loss(s1,s2) ≤ 1.0
+        "otd_split":{"OD0":[(1.0,0.0)]*14,"OD2":[(1.0,0.0)]*14,"OD3":[(1.0,0.0)]*14,"OD4":[(1.0,0.0)]*14,"OD5":[(1.0,0.0)]*14,"OD6":[(1.0,0.0)]*14},
+        "otd_rates":{"OD0":[1,1,1,1,1,1,1,1,1,1,1,1,1,1],"OD2":[1,.3,.7,1,.5,1,1,1,1,1,1,1,1,1],"OD3":[1,1,1,1,1,1,1,1,1,1,1,1,1,1],"OD4":[1,1,.5,1,1,1,.5,1,1,1,.5,1,1,1],"OD5":[1,1,1,1,1,1,1,1,1,1,1,1,1,1],"OD6":[1,1,1,1,1,1,1,1,1,1,1,1,1,1]},
         "otd_daily":{"F4":[0,0,0,0,0,0,0,0,0,0,0,0,0,0],"GB":[0,0,0,0,0,0,0,0,0,0,0,0,0,0],"GL":[0,0,0,0,0,0,0,0,0,0,0,0,0,0],"GX":[0,0,0,0,0,0,0,0,0,0,0,0,0,0],"LG":[550,685,590,1000,550,550,725,1000,1000,450,0,0,0,0],"MR":[0,0,0,0,0,0,0,0,0,0,0,0,0,0],"V1":[0,0,0,0,0,0,0,0,0,0,0,0,0,0],"XC":[1140,1140,0,0,570,0,0,0,0,1140,1140,0,0,0],"XD":[0,0,0,0,0,0,0,0,0,0,0,0,0,0],"XGB":[880,0,927,0,0,0,0,0,0,0,0,0,0,0],"XGS":[1040,1040,0,1040,1040,2040,1040,1040,1040,1040,2040,2040,1000,1000],"XR":[0,0,610,610,610,610,610,610,610,0,0,0,0,0],"Y3":[0,0,0,0,0,0,0,0,0,0,0,0,0,0],"Y4":[750,750,0,0,0,0,0,0,0,0,0,0,0,0]},
         "otd_rem":{"F4":[238,238,238,238,238,238,238,238,238,238,238,238,238,238],"GB":[0,0,0,0,0,0,0,0,0,0,0,0,0,0],"GL":[0,0,0,0,0,0,0,0,0,0,0,0,0,0],"GX":[200,200,200,200,200,200,200,200,200,200,200,200,200,200],"LG":[-107,-207,-172,-232,118,18,-82,-137,83,303,-27,-27,-27,-27],"MR":[108,108,108,108,108,108,108,108,108,108,108,108,108,108],"V1":[400,400,400,400,400,400,400,400,400,400,400,400,400,400],"XC":[654,634,614,-546,-1126,-556,-556,-556,-556,-556,584,1724,1724,1724],"XD":[1069,1069,1069,1069,1069,1069,1069,1069,1069,1069,1069,1069,1069,1069],"XGB":[206,611,136,588,588,588,588,588,588,588,588,588,588,588],"XGS":[955,895,835,-265,-325,-385,555,-605,-1765,-2925,-2985,-2045,-1105,-205],"XR":[380,150,-80,70,220,370,520,670,820,970,510,50,50,50],"Y3":[38,38,38,38,38,38,38,38,38,38,38,38,38,38],"Y4":[910,1160,1410,910,410,410,410,410,410,410,410,410,410,410]},
         "md_alloc":{"MD1":[["XGS"]*14, [""]*14],"MD2":[["XGB","XGB","XGB","XGB","","","","XGS","XGS","XGS","","","",""],["Y4","Y4","Y4","Y4","Y4","","","","","","","","",""]]},
@@ -100,6 +123,38 @@ _default_sus = get_default_sus()
 for _k in ("ta_fixture_usage","ta_fixture_count","ta_per_cycle","md_rates"):
     if _k not in st.session_state.sus:
         st.session_state.sus[_k] = _default_sus[_k]
+
+# ═══ YENİ: OTD 2-slot geriye uyumluluk ═══
+# Eski session'larda OD5 / otd_alloc2 / otd_split yoksa default'tan al
+_nd_compat = len(st.session_state.sus.get("otd_alloc",{}).get("OD0", [])) or 14
+for _ln in OTD_LINES:
+    # OD5 hattı (mevcut session'da yoksa boş ekle)
+    if _ln not in st.session_state.sus.get("otd_alloc", {}):
+        st.session_state.sus.setdefault("otd_alloc", {})[_ln] = [""]*_nd_compat
+    if _ln not in st.session_state.sus.get("otd_rates", {}):
+        st.session_state.sus.setdefault("otd_rates", {})[_ln] = [1.0]*_nd_compat
+# Slot2 ve split dict'leri yoksa ekle
+if "otd_alloc2" not in st.session_state.sus:
+    st.session_state.sus["otd_alloc2"] = {ln: [""]*_nd_compat for ln in OTD_LINES}
+else:
+    for _ln in OTD_LINES:
+        if _ln not in st.session_state.sus["otd_alloc2"]:
+            st.session_state.sus["otd_alloc2"][_ln] = [""]*_nd_compat
+if "otd_split" not in st.session_state.sus:
+    st.session_state.sus["otd_split"] = {ln: [(1.0,0.0)]*_nd_compat for ln in OTD_LINES}
+else:
+    for _ln in OTD_LINES:
+        if _ln not in st.session_state.sus["otd_split"]:
+            st.session_state.sus["otd_split"][_ln] = [(1.0,0.0)]*_nd_compat
+        else:
+            # Tuple olmayan ihtiyaç gibi durumları normalize et
+            _sp = st.session_state.sus["otd_split"][_ln]
+            for _i, _v in enumerate(_sp):
+                if not (isinstance(_v, (tuple, list)) and len(_v) >= 2):
+                    _sp[_i] = (1.0, 0.0)
+                else:
+                    _sp[_i] = (float(_v[0]), float(_v[1]))
+
 # md_alloc: tek satırlı eski hatları çok satırlıya çıkar
 for _ln in ("MD1","MD2"):
     _rows = st.session_state.sus.get("md_alloc",{}).get(_ln, [])
@@ -139,6 +194,8 @@ if "manual_impact" not in st.session_state: st.session_state.manual_impact = Non
 # ═══ v3.4: Kalıcı önizleme durumu — oran düzenleme sırasında kaybolmaz ═══
 if "preview_active" not in st.session_state: st.session_state.preview_active = False
 if "preview_alloc" not in st.session_state: st.session_state.preview_alloc = None
+if "preview_alloc2" not in st.session_state: st.session_state.preview_alloc2 = None
+if "preview_split" not in st.session_state: st.session_state.preview_split = None
 if "preview_rates" not in st.session_state: st.session_state.preview_rates = None
 if "preview_setups" not in st.session_state: st.session_state.preview_setups = None
 # ═══ MD Manuel Düzenleme önizlemesi ═══
@@ -227,6 +284,15 @@ if _nd_now > len(_DEFAULT_DATES):
                 if len(_row) < _nd_now: _row.extend([""] * (_nd_now - len(_row)))
         elif len(_a) < _nd_now:
             _s["otd_alloc"][_ln] = _a + [""] * (_nd_now - len(_a))
+    # ═══ Slot2 ve split de pad'lensin ═══
+    for _ln in _s.get("otd_alloc2", {}):
+        _a = _s["otd_alloc2"][_ln]
+        if len(_a) < _nd_now:
+            _s["otd_alloc2"][_ln] = _a + [""] * (_nd_now - len(_a))
+    for _ln in _s.get("otd_split", {}):
+        _a = _s["otd_split"][_ln]
+        if len(_a) < _nd_now:
+            _s["otd_split"][_ln] = _a + [(1.0, 0.0)] * (_nd_now - len(_a))
     for _ln in _s.get("md_alloc", {}):
         for _row in _s["md_alloc"][_ln]:
             if isinstance(_row, list) and len(_row) < _nd_now:
@@ -344,7 +410,7 @@ def run_optimization(current_plan):
         if stage == "OTD":
             alloc = applied["otd_alloc"]
             for d in range(max(0, day-2), day+1):
-                for line in ["OD0","OD2","OD3","OD4","OD6"]:
+                for line in OTD_LINES:
                     line_alloc = alloc.get(line, [""]*nd)
                     if d < len(line_alloc) and line_alloc[d] == "":
                         cap = TEMPO.get(line, {}).get(c, 0)
@@ -681,12 +747,16 @@ if "splash_shown" not in st.session_state:
 # =====================================================================
 
 # ═══ v3: Alokasyondan günlük üretime dönüşüm ═══
-def alloc_to_daily(alloc_dict, tempo_dict, lines, rates_dict=None):
-    """OTD alokasyonunu günlük üretim miktarlarına dönüştürür."""
+def alloc_to_daily(alloc_dict, tempo_dict, lines, rates_dict=None,
+                   alloc2_dict=None, split_dict=None):
+    """OTD/MD alokasyonunu günlük üretim miktarlarına dönüştürür.
+    Slot1: alloc_dict — Slot2: alloc2_dict (yeni, opsiyonel).
+    Slot fraksiyonları split_dict'ten alınır (default slot2 boşsa (1.0,0.0))."""
     nd = len(st.session_state.dyn_dates)
     daily = {c: [0]*nd for c in SUS_CARDS}
     for ln in lines:
         row_data = alloc_dict.get(ln, [""]*nd)
+        # MD-stili 2-row alokasyon (md_alloc gibi)
         rows = row_data if (row_data and isinstance(row_data[0], list)) else [row_data]
         rates = rates_dict.get(ln, [1]*nd) if rates_dict else [1]*nd
         for row in rows:
@@ -694,7 +764,24 @@ def alloc_to_daily(alloc_dict, tempo_dict, lines, rates_dict=None):
                 if i < nd and card and card in SUS_CARDS:
                     cap = tempo_dict.get(ln, {}).get(card, 0)
                     rate = rates[i] if i < len(rates) else 1
-                    daily[card][i] += int(cap * rate)
+                    # ═══ Yeni: Slot1 üretim payı (f1) ═══
+                    f1 = 1.0
+                    if split_dict and ln in split_dict and i < len(split_dict[ln]):
+                        try: f1 = float(split_dict[ln][i][0])
+                        except Exception: f1 = 1.0
+                    daily[card][i] += int(cap * rate * f1)
+        # ═══ Yeni: Slot2 üretim ═══
+        if alloc2_dict:
+            row2 = alloc2_dict.get(ln, [""]*nd)
+            for i, card2 in enumerate(row2):
+                if i < nd and card2 and card2 in SUS_CARDS:
+                    cap2 = tempo_dict.get(ln, {}).get(card2, 0)
+                    rate = rates[i] if i < len(rates) else 1
+                    f2 = 0.0
+                    if split_dict and ln in split_dict and i < len(split_dict[ln]):
+                        try: f2 = float(split_dict[ln][i][1])
+                        except Exception: f2 = 0.0
+                    daily[card2][i] += int(cap2 * rate * f2)
     return daily
 
 def compute_manual_impact(old_plan, new_plan):
@@ -839,14 +926,21 @@ def make_fixture_grid(usage_dict, fcount_dict, d_idx=None, editable_ref=None):
     h += '</tbody></table>'
     return h
 
-def make_grid(card_data, init_key=None, d_idx=None):
+def make_grid(card_data, init_key=None, d_idx=None, highlight=None):
     idx = d_idx if d_idx is not None else list(range(N_DAYS))
     h = '<table class="otd-table"><thead><tr><th style="text-align:left;">Kart</th>'
     if init_key: h += '<th>Stok₀</th>'
     for i in idx: h += f'<th>{SUS_DAYS[i]}<br><span style="font-size:0.58rem;opacity:0.7">{SUS_DATES[i]}</span></th>'
     h += '</tr></thead><tbody>'
     tot = [0]*len(idx)
+    # YENİ: highlight modunda sadece o kart satırını göster (TOPLAM hala tüm kartlardan)
+    cards_iter = SUS_CARDS if not highlight else [c for c in SUS_CARDS if c == highlight]
     for c in SUS_CARDS:
+        vals = card_data.get(c, [0]*N_DAYS)
+        for ji, i in enumerate(idx):
+            v = vals[i] if i < len(vals) else 0
+            tot[ji] += v
+    for c in cards_iter:
         vals = card_data.get(c, [0]*N_DAYS)
         bg = KART_RENKLERI.get(c,"#888")
         h += f'<tr><td style="background:{bg};color:#1e293b;font-weight:700;text-align:left;padding-left:8px;border-radius:6px;">{c}</td>'
@@ -855,7 +949,6 @@ def make_grid(card_data, init_key=None, d_idx=None):
             h += f'<td style="color:#93c5fd;font-weight:600;">{iv:,}</td>'
         for ji, i in enumerate(idx):
             v = vals[i] if i < len(vals) else 0
-            tot[ji] += v
             if v < 0: h += f'<td style="background:rgba(239,68,68,0.25);color:#ef4444;font-weight:700;">{v:,}</td>'
             elif v == 0: h += '<td style="color:#475569;">—</td>'
             else: h += f'<td style="color:#fff;">{v:,}</td>'
@@ -901,39 +994,70 @@ def make_grid_plan(card_data, ref_data=None, init_key=None, init_src=None, d_idx
     h += '</tr></tbody></table>'
     return h
 
-def make_alloc(alloc_dict, lines, d_idx=None, rates_dict=None):
+def make_alloc(alloc_dict, lines, d_idx=None, rates_dict=None,
+               alloc2_dict=None, split_dict=None, highlight=None):
+    """Hat-Kart alokasyonu render.
+    alloc2_dict / split_dict verilirse her hat için 2 sub-row gösterilir (Slot1/Slot2).
+    highlight verilirse o karta ait hücreler vurgulanır, diğerleri soluklaştırılır."""
     idx = d_idx if d_idx is not None else list(range(N_DAYS))
+    two_slot = alloc2_dict is not None
     h = '<table class="otd-table"><thead><tr><th style="text-align:left;">Hat</th>'
     for i in idx: h += f'<th>{SUS_DAYS[i]}<br><span style="font-size:0.58rem;opacity:0.7">{SUS_DATES[i]}</span></th>'
     h += '</tr></thead><tbody>'
     for ln in lines:
         rows = alloc_dict.get(ln, [])
-        if not rows: continue
-        disp = rows if isinstance(rows[0], list) else [rows]
+        if not rows and not two_slot: continue
+        if not rows: rows = [""]*N_DAYS
+        # Mevcut davranış: MD gibi multi-row alokasyon
+        disp = rows if (rows and isinstance(rows[0], list)) else [rows]
+        # YENİ: 2-slot OTD modu — slot2 satırını append et
+        if two_slot:
+            disp = [rows if not isinstance(rows[0], list) else rows[0],
+                    alloc2_dict.get(ln, [""]*N_DAYS)]
         rates_all = rates_dict.get(ln, None) if rates_dict else None
-        rates_is_multi = bool(rates_all) and bool(rates_all) and isinstance(rates_all[0], list)
+        rates_is_multi = bool(rates_all) and isinstance(rates_all[0], list)
+        split_row = split_dict.get(ln, None) if split_dict else None
         for ri, row in enumerate(disp):
             if rates_is_multi:
                 rates = rates_all[ri] if ri < len(rates_all) else [1.0]*N_DAYS
             else:
                 rates = rates_all
-            row_label = ln if ri == 0 else ""
-            if len(disp) > 1:
-                row_label = f"{ln}-{ri+1}"
+            if two_slot:
+                row_label = f"{ln} · S{ri+1}" if ri == 0 else f"S{ri+1}"
+                # Slot2 row ise hatın label'ı boş
+                if ri == 1: row_label = '<span style="opacity:0.6;font-size:0.7rem;">Slot 2</span>'
+                else: row_label = f'{ln} <span style="opacity:0.55;font-size:0.65rem;">Slot 1</span>'
+            else:
+                row_label = ln if ri == 0 else ""
+                if len(disp) > 1:
+                    row_label = f"{ln}-{ri+1}"
             h += f'<tr><td class="otd-rh">{row_label}</td>'
             for i in idx:
                 v = row[i] if i < len(row) else ""
                 if v:
                     bg = KART_RENKLERI.get(v,"#666")
                     rate_val = rates[i] if rates and i < len(rates) else 1.0
+                    # YENİ: 2-slot modunda hücre içinde slot frac göster
+                    frac_html = ""
+                    if two_slot and split_row and i < len(split_row):
+                        try:
+                            fr = float(split_row[i][ri])
+                            if fr > 0 and fr < 1.0:
+                                frac_html = f'<span class="rate-sub" style="color:rgba(0,0,0,0.55);">f={fr:.2f}</span>'
+                        except Exception: pass
                     rate_html = ""
                     if rates and rate_val < 1.0:
                         pct = int(rate_val * 100)
                         rate_html = f'<span class="rate-sub" style="color:rgba(0,0,0,0.6);">%{pct}</span>'
-                    elif rates and rate_val == 1.0:
+                    elif rates and rate_val == 1.0 and not frac_html:
                         rate_html = f'<span class="rate-sub" style="color:rgba(0,0,0,0.35);">%100</span>'
-                    h += f'<td style="background:{bg};color:#1e293b;font-weight:700;line-height:1.15;">{v}{rate_html}</td>'
-                else: h += '<td class="otd-none">—</td>'
+                    # YENİ: highlight (sidebar kart filtresi)
+                    opa = ""
+                    if highlight and v != highlight:
+                        opa = "opacity:0.25;"
+                    h += f'<td style="background:{bg};color:#1e293b;font-weight:700;line-height:1.15;{opa}">{v}{frac_html}{rate_html}</td>'
+                else:
+                    h += '<td class="otd-none">—</td>'
             h += '</tr>'
     h += '</tbody></table>'
     return h
@@ -1210,7 +1334,7 @@ def _render_violation_details(stage_code, rem_key, stage_full, stage_short, next
                 # Hat bulma (sadece OTD/MD için anlamlı)
                 hat = "—"
                 if rem_key == "otd_rem":
-                    hat = next((ln for ln in ["OD0","OD2","OD3","OD4","OD6"]
+                    hat = next((ln for ln in OTD_LINES
                                 if i < len(s["otd_alloc"].get(ln, []))
                                 and s["otd_alloc"][ln][i] == c), "—")
                 # Açık miktarı artıyor mu (kötüye gidiyor mu)
@@ -1637,16 +1761,16 @@ with tab_panel:
             with _ref_tab:
                 # Referans plan (optimize edilmemiş) — orijinal davranış
                 st.markdown("**Hat – Kart Alokasyonu**")
-                st.markdown(make_alloc(sus["otd_alloc"], ["OD0","OD2","OD3","OD4","OD6"], d_idx=DATE_INDICES, rates_dict=sus.get("otd_rates",{})), unsafe_allow_html=True)
+                st.markdown(make_alloc(sus["otd_alloc"], OTD_LINES, d_idx=DATE_INDICES, rates_dict=sus.get("otd_rates",{}), alloc2_dict=sus.get("otd_alloc2"), split_dict=sus.get("otd_split"), highlight=hl), unsafe_allow_html=True)
                 # ═══ v3.1: Oranlar ayrı tablo — varsayılan kapalı ═══
                 with st.expander("📊 Verimlilik Oranları (OTD)", expanded=False):
                     st.caption("Kart renkli hücreler %100'den düşük oranları gösterir. Gri = %100 (tam verim).")
-                    st.markdown(make_rates_table(sus.get("otd_rates",{}), sus["otd_alloc"], ["OD0","OD2","OD3","OD4","OD6"], d_idx=DATE_INDICES), unsafe_allow_html=True)
+                    st.markdown(make_rates_table(sus.get("otd_rates",{}), sus["otd_alloc"], OTD_LINES, d_idx=DATE_INDICES), unsafe_allow_html=True)
                 st.markdown("**Günlük Üretim**")
-                st.markdown(make_grid(sus["otd_daily"], d_idx=DATE_INDICES), unsafe_allow_html=True)
+                st.markdown(make_grid(sus["otd_daily"], d_idx=DATE_INDICES, highlight=hl), unsafe_allow_html=True)
                 st.markdown("**📦 Kalan Stok — KSO**")
                 st.caption("🔴 Negatif = stok açığı — üretim talebi karşılayamıyor")
-                st.markdown(make_grid(sus["otd_rem"], "o", d_idx=DATE_INDICES), unsafe_allow_html=True)
+                st.markdown(make_grid(sus["otd_rem"], "o", d_idx=DATE_INDICES, highlight=hl), unsafe_allow_html=True)
 
             with _edit_tab:
                 st.markdown("""<div style="background:rgba(37,99,235,0.12);border:1px solid rgba(37,99,235,0.3);border-radius:10px;padding:12px 16px;margin-bottom:12px;">
@@ -1672,11 +1796,11 @@ with tab_panel:
                         st.success("✅ Mevcut OTD planında ihlal yok — optimize önerisi bulunmuyor.")
 
                 with st.expander("📖 Mevcut Alokasyon & Oranlar (salt okunur)", expanded=False):
-                    st.markdown(make_alloc_rates_combined(sus["otd_alloc"], sus.get("otd_rates",{}), ["OD0","OD2","OD3","OD4","OD6"], d_idx=DATE_INDICES), unsafe_allow_html=True)
+                    st.markdown(make_alloc_rates_combined(sus["otd_alloc"], sus.get("otd_rates",{}), OTD_LINES, d_idx=DATE_INDICES), unsafe_allow_html=True)
 
                 with st.expander("📖 Hat — Kart Uyumluluk Tablosu", expanded=False):
                     compat_rows = []
-                    for ln in ["OD0","OD2","OD3","OD4","OD6"]:
+                    for ln in OTD_LINES:
                         cards = sorted([c for c in TEMPO.get(ln, {}) if TEMPO[ln][c] > 0])
                         compat_rows.append({"Hat": ln, "Üretilebilir Kartlar": ", ".join(cards),
                                             "Tempoları": " | ".join([f"{c}:{TEMPO[ln][c]}" for c in cards])})
@@ -1685,12 +1809,19 @@ with tab_panel:
                 # ═══ Kart editörü ═══
                 st.markdown("**🎯 Kart Ataması** — hücreye tıklayın, listeden kart seçin:")
                 edit_data = {}
-                for ln in ["OD0","OD2","OD3","OD4","OD6"]:
-                    row = sus["otd_alloc"].get(ln, [""]*N_DAYS)
-                    if isinstance(row[0], list): row = row[0]
-                    edit_data[ln] = {f"{SUS_DAYS[i]} {SUS_DATES[i]}": (row[i] if i < len(row) else "") for i in range(N_DAYS)}
+                # ═══ YENİ: Her hat için 2 satır (Slot1 + Slot2) ═══
+                row_keys = []
+                for ln in OTD_LINES:
+                    s1 = sus["otd_alloc"].get(ln, [""]*N_DAYS)
+                    if s1 and isinstance(s1[0], list): s1 = s1[0]
+                    s2 = sus.get("otd_alloc2", {}).get(ln, [""]*N_DAYS)
+                    key1 = f"{ln} · Slot1"
+                    key2 = f"{ln} · Slot2"
+                    edit_data[key1] = {f"{SUS_DAYS[i]} {SUS_DATES[i]}": (s1[i] if i < len(s1) else "") for i in range(N_DAYS)}
+                    edit_data[key2] = {f"{SUS_DAYS[i]} {SUS_DATES[i]}": (s2[i] if i < len(s2) else "") for i in range(N_DAYS)}
+                    row_keys.extend([key1, key2])
                 df_edit = pd.DataFrame(edit_data).T
-                df_edit.index.name = "Hat"
+                df_edit.index.name = "Hat · Slot"
 
                 edited_df = st.data_editor(
                     df_edit, use_container_width=True, num_rows="fixed",
@@ -1702,23 +1833,57 @@ with tab_panel:
                     }
                 )
 
+                st.caption("💡 **Slot 2 dolu** ise setup kaybı otomatik uygulanır (varsayılan %50, XC↔XR %0). "
+                           "Üretim payları (f1, f2) eşit dağıtılır — gelişmiş düzenleme için 'Setup & Pay' bölümü.")
+
                 # ═══ Butonlar ═══
                 ec1, ec2, ec3 = st.columns([2, 2, 4])
                 with ec1:
                     if st.button("🔍 Etkiyi Önizle", type="primary", use_container_width=True, key="btn_preview_alloc"):
-                        # Düzenlemeyi session state'e kaydet
-                        _new_alloc = {}
-                        for ln in ["OD0","OD2","OD3","OD4","OD6"]:
-                            rv = []
+                        # Düzenlemeyi session state'e kaydet — SLOT1 + SLOT2
+                        _new_alloc = {}      # slot1
+                        _new_alloc2 = {}     # slot2
+                        _new_split = {}      # (f1, f2) per (line, day)
+                        for ln in OTD_LINES:
+                            r1 = []; r2 = []
+                            key1 = f"{ln} · Slot1"; key2 = f"{ln} · Slot2"
                             for i in range(N_DAYS):
                                 cn = f"{SUS_DAYS[i]} {SUS_DATES[i]}"
-                                cell = str(edited_df.loc[ln, cn]).strip() if cn in edited_df.columns else ""
-                                rv.append(cell if cell in SUS_CARDS else "")
-                            _new_alloc[ln] = rv
-                        # Oranları hesapla
+                                c1 = str(edited_df.loc[key1, cn]).strip() if cn in edited_df.columns else ""
+                                c2 = str(edited_df.loc[key2, cn]).strip() if cn in edited_df.columns else ""
+                                r1.append(c1 if c1 in SUS_CARDS else "")
+                                r2.append(c2 if c2 in SUS_CARDS else "")
+                            _new_alloc[ln] = r1
+                            _new_alloc2[ln] = r2
+                            # Split hesapla
+                            splits = []
+                            old_split = sus.get("otd_split", {}).get(ln, [(1.0, 0.0)]*N_DAYS)
+                            for i in range(N_DAYS):
+                                c1 = r1[i]; c2 = r2[i]
+                                if not c2:
+                                    splits.append((1.0, 0.0))
+                                elif not c1:
+                                    splits.append((0.0, 1.0))
+                                elif c1 == c2:
+                                    # Aynı kart 2 slot'ta → tek üretim gibi
+                                    splits.append((1.0, 0.0))
+                                else:
+                                    sl = setup_loss(c1, c2)
+                                    available = 1.0 - sl
+                                    # Mevcut değer varsa koru, yoksa eşit dağıt
+                                    try:
+                                        of1, of2 = float(old_split[i][0]), float(old_split[i][1])
+                                        if of1 + of2 > 0 and abs((of1+of2) - available) < 1e-6:
+                                            splits.append((of1, of2))
+                                        else:
+                                            splits.append((available/2, available/2))
+                                    except Exception:
+                                        splits.append((available/2, available/2))
+                            _new_split[ln] = splits
+                        # Oranları hesapla (mevcut mantık)
                         _new_rates = {}
-                        _setups = detect_setup_changes(_new_alloc, sus["otd_alloc"], ["OD0","OD2","OD3","OD4","OD6"])
-                        for ln in ["OD0","OD2","OD3","OD4","OD6"]:
+                        _setups = detect_setup_changes(_new_alloc, sus["otd_alloc"], OTD_LINES)
+                        for ln in OTD_LINES:
                             old_rates = sus.get("otd_rates", {}).get(ln, [1]*N_DAYS)
                             old_alloc_row = sus["otd_alloc"].get(ln, [""]*N_DAYS)
                             if isinstance(old_alloc_row[0], list): old_alloc_row = old_alloc_row[0]
@@ -1734,6 +1899,8 @@ with tab_panel:
                             _new_rates[ln] = rvals
                         st.session_state.preview_active = True
                         st.session_state.preview_alloc = _new_alloc
+                        st.session_state.preview_alloc2 = _new_alloc2
+                        st.session_state.preview_split = _new_split
                         st.session_state.preview_rates = _new_rates
                         st.session_state.preview_setups = _setups
                         st.rerun()
@@ -1787,15 +1954,23 @@ with tab_panel:
 
                     # Güncel oranlarla hesapla
                     p_rates = st.session_state.preview_rates  # güncel (düzenlenmiş olabilir)
+                    p_alloc2 = st.session_state.get("preview_alloc2", None)
+                    p_split  = st.session_state.get("preview_split", None)
 
                     # ── Birleşik önizleme ──
                     st.markdown("**📊 Düzenlenmiş Alokasyon & Oranlar:**")
-                    st.markdown(make_alloc_rates_combined(p_alloc, p_rates, ["OD0","OD2","OD3","OD4","OD6"], d_idx=DATE_INDICES), unsafe_allow_html=True)
+                    st.markdown(make_alloc(p_alloc, OTD_LINES, d_idx=DATE_INDICES,
+                                           rates_dict=p_rates,
+                                           alloc2_dict=p_alloc2, split_dict=p_split, highlight=hl),
+                                unsafe_allow_html=True)
 
-                    # ── Hesapla ──
-                    new_daily = alloc_to_daily(p_alloc, TEMPO, ["OD0","OD2","OD3","OD4","OD6"], p_rates)
+                    # ── Hesapla — slot2 + split dahil ──
+                    new_daily = alloc_to_daily(p_alloc, TEMPO, OTD_LINES, p_rates,
+                                               alloc2_dict=p_alloc2, split_dict=p_split)
                     preview_plan = copy.deepcopy(sus)
                     preview_plan["otd_alloc"] = p_alloc
+                    if p_alloc2 is not None: preview_plan["otd_alloc2"] = p_alloc2
+                    if p_split  is not None: preview_plan["otd_split"]  = p_split
                     preview_plan["otd_rates"] = p_rates
                     preview_plan["otd_daily"] = new_daily
                     preview_plan = recalc_stocks(preview_plan)
@@ -1883,12 +2058,12 @@ with tab_panel:
 
             with ot1:
                 st.markdown("**Hat – Kart Alokasyonu**")
-                st.markdown(make_alloc(sus["otd_alloc"], ["OD0","OD2","OD3","OD4","OD6"], d_idx=DATE_INDICES, rates_dict=sus.get("otd_rates",{})), unsafe_allow_html=True)
+                st.markdown(make_alloc(sus["otd_alloc"], OTD_LINES, d_idx=DATE_INDICES, rates_dict=sus.get("otd_rates",{}), alloc2_dict=sus.get("otd_alloc2"), split_dict=sus.get("otd_split"), highlight=hl), unsafe_allow_html=True)
                 st.markdown("**Günlük Üretim**")
-                st.markdown(make_grid(sus["otd_daily"], d_idx=DATE_INDICES), unsafe_allow_html=True)
+                st.markdown(make_grid(sus["otd_daily"], d_idx=DATE_INDICES, highlight=hl), unsafe_allow_html=True)
                 st.markdown("**📦 Kalan Stok — KSO**")
                 st.caption("🔴 Negatif = stok açığı")
-                st.markdown(make_grid(sus["otd_rem"], "o", d_idx=DATE_INDICES), unsafe_allow_html=True)
+                st.markdown(make_grid(sus["otd_rem"], "o", d_idx=DATE_INDICES, highlight=hl), unsafe_allow_html=True)
 
             with ot2:
                 st.markdown(f"**{otd_res['message']}**")
@@ -1896,7 +2071,7 @@ with tab_panel:
                 if proposals:
                     st.caption("🟩 Yeşil çerçeve = referanstan farklı hücreler")
                     st.markdown("**Hat – Kart Alokasyonu (Optimize)**")
-                    st.markdown(make_alloc_compare(np["otd_alloc"], sus["otd_alloc"], ["OD0","OD2","OD3","OD4","OD6"], d_idx=DATE_INDICES, rates_dict=sus.get("otd_rates",{})), unsafe_allow_html=True)
+                    st.markdown(make_alloc_compare(np["otd_alloc"], sus["otd_alloc"], OTD_LINES, d_idx=DATE_INDICES, rates_dict=sus.get("otd_rates",{})), unsafe_allow_html=True)
                     st.markdown("**Günlük Üretim (Optimize)**")
                     st.markdown(make_grid_plan(np["otd_daily"], sus["otd_daily"], d_idx=DATE_INDICES), unsafe_allow_html=True)
                     st.markdown("**📦 Kalan Stok — KSO (Optimize)**")
@@ -1993,14 +2168,14 @@ with tab_panel:
 
             with _md_ref_tab:
                 st.markdown("**Hat – Kart Alokasyonu**")
-                st.markdown(make_alloc(sus["md_alloc"], ["MD1","MD2"], d_idx=DATE_INDICES, rates_dict=sus.get("md_rates",{})), unsafe_allow_html=True)
+                st.markdown(make_alloc(sus["md_alloc"], ["MD1","MD2"], d_idx=DATE_INDICES, rates_dict=sus.get("md_rates",{}), highlight=hl), unsafe_allow_html=True)
                 with st.expander("📊 Verimlilik Oranları (MD)", expanded=False):
                     st.caption("Hat bölünmesi (örn. 0.5+0.5) durumlarında satırlar ayrı gösterilir. %100 = tam verim, <%100 = bölünme/setup.")
                     st.markdown(make_rates_table(sus.get("md_rates",{}), sus["md_alloc"], ["MD1","MD2"], d_idx=DATE_INDICES), unsafe_allow_html=True)
                 st.markdown("**Günlük Üretim**")
-                st.markdown(make_grid(sus["md_daily"], d_idx=DATE_INDICES), unsafe_allow_html=True)
+                st.markdown(make_grid(sus["md_daily"], d_idx=DATE_INDICES, highlight=hl), unsafe_allow_html=True)
                 st.markdown("**📦 Kalan Stok — KSM**")
-                st.markdown(make_grid(sus["md_rem"], "m", d_idx=DATE_INDICES), unsafe_allow_html=True)
+                st.markdown(make_grid(sus["md_rem"], "m", d_idx=DATE_INDICES, highlight=hl), unsafe_allow_html=True)
 
             with _md_edit_tab:
                 st.markdown("""<div style="background:rgba(37,99,235,0.12);border:1px solid rgba(37,99,235,0.3);border-radius:10px;padding:12px 16px;margin-bottom:12px;">
@@ -2241,11 +2416,11 @@ with tab_panel:
 
             with mt1:
                 st.markdown("**Hat – Kart Alokasyonu**")
-                st.markdown(make_alloc(sus["md_alloc"], ["MD1","MD2"], d_idx=DATE_INDICES, rates_dict=sus.get("md_rates",{})), unsafe_allow_html=True)
+                st.markdown(make_alloc(sus["md_alloc"], ["MD1","MD2"], d_idx=DATE_INDICES, rates_dict=sus.get("md_rates",{}), highlight=hl), unsafe_allow_html=True)
                 st.markdown("**Günlük Üretim**")
-                st.markdown(make_grid(sus["md_daily"], d_idx=DATE_INDICES), unsafe_allow_html=True)
+                st.markdown(make_grid(sus["md_daily"], d_idx=DATE_INDICES, highlight=hl), unsafe_allow_html=True)
                 st.markdown("**📦 Kalan Stok — KSM**")
-                st.markdown(make_grid(sus["md_rem"], "m", d_idx=DATE_INDICES), unsafe_allow_html=True)
+                st.markdown(make_grid(sus["md_rem"], "m", d_idx=DATE_INDICES, highlight=hl), unsafe_allow_html=True)
 
             with mt2:
                 st.markdown(f"**{md_res['message']}**")
@@ -2348,12 +2523,12 @@ with tab_panel:
 
             with _ta_ref_tab:
                 st.markdown("**Günlük TA Üretim**")
-                st.markdown(make_grid(sus["ta_daily"], d_idx=DATE_INDICES), unsafe_allow_html=True)
+                st.markdown(make_grid(sus["ta_daily"], d_idx=DATE_INDICES, highlight=hl), unsafe_allow_html=True)
                 st.markdown("**🔧 Fikstür Kullanımı (gün başına)**")
                 st.caption("🔴 Kırmızı = 2× fikstür sayısını aşan (kısıt ihlali) · 🟡 Sarı = limit tam (2×)")
                 st.markdown(make_fixture_grid(sus["ta_fixture_usage"], sus["ta_fixture_count"], d_idx=DATE_INDICES), unsafe_allow_html=True)
                 st.markdown("**📦 Kalan Stok — KST**")
-                st.markdown(make_grid(sus["ta_rem"], "t", d_idx=DATE_INDICES), unsafe_allow_html=True)
+                st.markdown(make_grid(sus["ta_rem"], "t", d_idx=DATE_INDICES, highlight=hl), unsafe_allow_html=True)
 
             with _ta_edit_tab:
                 st.markdown("""<div style="background:rgba(37,99,235,0.12);border:1px solid rgba(37,99,235,0.3);border-radius:10px;padding:12px 16px;margin-bottom:12px;">
@@ -2531,9 +2706,9 @@ with tab_panel:
 
             with tt1:
                 st.markdown("**Günlük Üretim**")
-                st.markdown(make_grid(sus["ta_daily"], d_idx=DATE_INDICES), unsafe_allow_html=True)
+                st.markdown(make_grid(sus["ta_daily"], d_idx=DATE_INDICES, highlight=hl), unsafe_allow_html=True)
                 st.markdown("**📦 Kalan Stok — KST**")
-                st.markdown(make_grid(sus["ta_rem"], "t", d_idx=DATE_INDICES), unsafe_allow_html=True)
+                st.markdown(make_grid(sus["ta_rem"], "t", d_idx=DATE_INDICES, highlight=hl), unsafe_allow_html=True)
 
             with tt2:
                 st.markdown(f"**{ta_res['message']}**")
@@ -2626,7 +2801,7 @@ with tab_montaj:
 
         st.markdown("#### 📦 KST — Talep Karşılama Stoğu")
         st.caption("🔴 Negatif = o gün talep karşılanamıyor (TA çıkışı + başlangıç stoğu < birikimli talep)")
-        st.markdown(make_grid(sus["ta_rem"], "t", d_idx=DATE_INDICES), unsafe_allow_html=True)
+        st.markdown(make_grid(sus["ta_rem"], "t", d_idx=DATE_INDICES, highlight=hl), unsafe_allow_html=True)
 
         # Kart-bazlı kapsama özet kartları
         st.markdown("#### 📋 Kart Bazlı Kapsama Özeti")
@@ -2932,22 +3107,103 @@ with tab_veri:
                 st.rerun()
 
         elif veri_modu == "📄 Excel Yükle":
-            st.caption("Stok verisi içeren CSV/Excel yükleyin (Kart, OTD Stok, MD Stok, TA Stok sütunları).")
+            st.caption("Format otomatik algılanır: **Stok** (Kart, OTD, MD, TA Stok) veya **Montaj/UMY Planı** (Kart × Tarih).")
             up = st.file_uploader("Dosya seç:", type=["csv","xlsx"], key="stk_up")
             if up:
                 try:
                     if up.name.endswith(".csv"): df_up = pd.read_csv(up)
                     else: df_up = pd.read_excel(up)
-                    st.dataframe(df_up, use_container_width=True, hide_index=True)
-                    if st.button("✅ Uygula", type="primary"):
-                        for _, row in df_up.iterrows():
-                            c_k = str(row.iloc[0]).strip()
-                            if c_k in SUS_CARDS:
-                                sus["init"][c_k] = {"o":int(row.iloc[1]),"m":int(row.iloc[2]),"t":int(row.iloc[3])}
-                        st.session_state.sus = recalc_stocks(sus)
-                        st.success("Stoklar yüklendi ve yeniden hesaplandı.")
-                        st.rerun()
-                except Exception as e: st.error(f"Hata: {e}")
+                except Exception as e:
+                    st.error(f"Dosya okunamadı: {e}")
+                    df_up = None
+
+                if df_up is not None and len(df_up) > 0:
+                    # ─── Format Otomatik Algılama ───
+                    cols = list(df_up.columns)
+                    first_col_name = str(cols[0]).strip().lower()
+                    detected = None
+                    # 1) Stok formatı: 4 sütun + sütun başlıkları stok kelimesi içeriyor
+                    col_text = " ".join(str(c).lower() for c in cols)
+                    if len(cols) >= 4 and ("stok" in col_text or "stock" in col_text):
+                        detected = "stok"
+                    # 2) Montaj/UMY formatı: ≥5 sütun, sütun başlıklarında tarih/datetime nesneleri
+                    elif len(cols) >= 3:
+                        # Tarih sütunlarını say
+                        n_date = 0
+                        for c in cols[1:]:
+                            if isinstance(c, (pd.Timestamp,)) or hasattr(c, "year"):
+                                n_date += 1
+                            else:
+                                cs = str(c).strip()
+                                # "2026-06-01" benzeri ya da "07.05" gibi
+                                if any(ch.isdigit() for ch in cs) and (("-" in cs or "." in cs or "/" in cs)):
+                                    n_date += 1
+                        if n_date >= 3:
+                            detected = "montaj"
+
+                    st.markdown(f"**🔎 Algılanan format:** `{detected or 'BİLİNMİYOR'}`")
+                    st.dataframe(df_up.head(20), use_container_width=True, hide_index=True)
+
+                    if detected == "stok":
+                        if st.button("✅ Uygula (Stok)", type="primary"):
+                            try:
+                                ok_cnt = 0
+                                for _, row in df_up.iterrows():
+                                    c_k = str(row.iloc[0]).strip()
+                                    if c_k in SUS_CARDS:
+                                        def _safe_int(x):
+                                            try:
+                                                if pd.isna(x): return 0
+                                                return int(float(x))
+                                            except Exception: return 0
+                                        sus["init"][c_k] = {
+                                            "o": _safe_int(row.iloc[1]),
+                                            "m": _safe_int(row.iloc[2]),
+                                            "t": _safe_int(row.iloc[3]),
+                                        }
+                                        ok_cnt += 1
+                                st.session_state.sus = recalc_stocks(sus)
+                                st.success(f"✅ {ok_cnt} kart için stok güncellendi.")
+                                st.rerun()
+                            except Exception as e:
+                                st.error(f"Stok uygulama hatası: {e}")
+
+                    elif detected == "montaj":
+                        st.info("📋 Montaj/UMY planı algılandı. Bu dosya **montaj talebine** yazılacak (sus['assembly']). "
+                                "İlk N_DAYS={n} tarih sütunu kullanılacak, geri kalan göz ardı edilecek. "
+                                "Bilinmeyen kartlar (2T, 4T, TL, Y2 vb.) atlanır.".format(n=N_DAYS))
+                        if st.button("✅ Uygula (Montaj Planı)", type="primary"):
+                            try:
+                                ok_cnt = 0; skipped = []
+                                date_cols = cols[1:1+N_DAYS]
+                                for _, row in df_up.iterrows():
+                                    c_k = str(row.iloc[0]).strip()
+                                    if c_k not in SUS_CARDS:
+                                        skipped.append(c_k); continue
+                                    vals = []
+                                    for dc in date_cols:
+                                        x = row[dc]
+                                        try:
+                                            if pd.isna(x): vals.append(0)
+                                            else: vals.append(int(float(x)))
+                                        except Exception:
+                                            vals.append(0)
+                                    while len(vals) < N_DAYS: vals.append(0)
+                                    sus["assembly"][c_k] = vals[:N_DAYS]
+                                    ok_cnt += 1
+                                # Sıfır yapılmayanları da koru — sadece dosyada olmayan kartları boşaltma
+                                st.session_state.sus = recalc_stocks(sus)
+                                msg = f"✅ Montaj planı güncellendi: {ok_cnt} kart yüklendi."
+                                if skipped:
+                                    msg += f" Atlananlar (kapsam dışı): {', '.join(sorted(set(skipped)))}"
+                                st.success(msg)
+                                st.rerun()
+                            except Exception as e:
+                                st.error(f"Montaj planı uygulama hatası: {e}")
+
+                    else:
+                        st.warning("⚠️ Format algılanamadı. **Stok formatı:** `Kart, OTD Stok, MD Stok, TA Stok` sütunları. "
+                                   "**Montaj formatı:** ilk sütun kart adı, sonraki sütunlar tarih (örn. `2026-06-01`).")
 
         elif veri_modu == "🔄 Varsayılana Dön":
             st.warning("Tüm değişiklikleri sıfırlayıp orijinal Excel verisine dönülecek.")
