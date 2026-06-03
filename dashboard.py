@@ -63,7 +63,10 @@ def get_default_sus():
         "otd_rates":{"OD0":[1,1,1,1,1,1,1,1,1,1,1,1,1,1],"OD2":[1,.3,.7,1,.5,1,1,1,1,1,1,1,1,1],"OD3":[1,1,1,1,1,1,1,1,1,1,1,1,1,1],"OD4":[1,1,.5,1,1,1,.5,1,1,1,.5,1,1,1],"OD6":[1,1,1,1,1,1,1,1,1,1,1,1,1,1]},
         "otd_daily":{"F4":[0,0,0,0,0,0,0,0,0,0,0,0,0,0],"GB":[0,0,0,0,0,0,0,0,0,0,0,0,0,0],"GL":[0,0,0,0,0,0,0,0,0,0,0,0,0,0],"GX":[0,0,0,0,0,0,0,0,0,0,0,0,0,0],"LG":[550,685,590,1000,550,550,725,1000,1000,450,0,0,0,0],"MR":[0,0,0,0,0,0,0,0,0,0,0,0,0,0],"V1":[0,0,0,0,0,0,0,0,0,0,0,0,0,0],"XC":[1140,1140,0,0,570,0,0,0,0,1140,1140,0,0,0],"XD":[0,0,0,0,0,0,0,0,0,0,0,0,0,0],"XGB":[880,0,927,0,0,0,0,0,0,0,0,0,0,0],"XGS":[1040,1040,0,1040,1040,2040,1040,1040,1040,1040,2040,2040,1000,1000],"XR":[0,0,610,610,610,610,610,610,610,0,0,0,0,0],"Y3":[0,0,0,0,0,0,0,0,0,0,0,0,0,0],"Y4":[750,750,0,0,0,0,0,0,0,0,0,0,0,0]},
         "otd_rem":{"F4":[238,238,238,238,238,238,238,238,238,238,238,238,238,238],"GB":[0,0,0,0,0,0,0,0,0,0,0,0,0,0],"GL":[0,0,0,0,0,0,0,0,0,0,0,0,0,0],"GX":[200,200,200,200,200,200,200,200,200,200,200,200,200,200],"LG":[-107,-207,-172,-232,118,18,-82,-137,83,303,-27,-27,-27,-27],"MR":[108,108,108,108,108,108,108,108,108,108,108,108,108,108],"V1":[400,400,400,400,400,400,400,400,400,400,400,400,400,400],"XC":[654,634,614,-546,-1126,-556,-556,-556,-556,-556,584,1724,1724,1724],"XD":[1069,1069,1069,1069,1069,1069,1069,1069,1069,1069,1069,1069,1069,1069],"XGB":[206,611,136,588,588,588,588,588,588,588,588,588,588,588],"XGS":[955,895,835,-265,-325,-385,555,-605,-1765,-2925,-2985,-2045,-1105,-205],"XR":[380,150,-80,70,220,370,520,670,820,970,510,50,50,50],"Y3":[38,38,38,38,38,38,38,38,38,38,38,38,38,38],"Y4":[910,1160,1410,910,410,410,410,410,410,410,410,410,410,410]},
-        "md_alloc":{"MD1":[["XGS"]*14],"MD2":[["XGB","XGB","XGB","XGB","","","","XGS","XGS","XGS","","","",""],["Y4","Y4","Y4","Y4","Y4","","","","","","","","",""]]},
+        "md_alloc":{"MD1":[["XGS"]*14, [""]*14],"MD2":[["XGB","XGB","XGB","XGB","","","","XGS","XGS","XGS","","","",""],["Y4","Y4","Y4","Y4","Y4","","","","","","","","",""]]},
+        "md_rates":{"MD1":[[1.0]*14, [1.0]*14],
+                    "MD2":[[0.5,0.5,0.5,0.5,1.0,1.0,1.0,1.0,1.0,1.0,1.0,1.0,1.0,1.0],
+                           [0.5,0.5,0.5,0.5,0.5,1.0,1.0,1.0,1.0,1.0,1.0,1.0,1.0,1.0]]},
         "md_daily":{"F4":[0,0,0,0,0,0,0,0,0,0,0,0,0,0],"GB":[0,0,0,0,0,0,0,0,0,0,0,0,0,0],"GL":[0,0,0,0,0,0,0,0,0,0,0,0,0,0],"GX":[0,0,0,0,0,0,0,0,0,0,0,0,0,0],"LG":[0,0,0,0,0,0,0,0,0,0,0,0,0,0],"MR":[0,0,0,0,0,0,0,0,0,0,0,0,0,0],"V1":[0,0,0,0,0,0,0,0,0,0,0,0,0,0],"XC":[0,0,0,0,0,0,0,0,0,0,0,0,0,0],"XD":[0,0,0,0,0,0,0,0,0,0,0,0,0,0],"XGB":[475,475,475,475,0,0,0,0,0,0,0,0,0,0],"XGS":[1100,1100,1100,1100,1100,1100,1100,2200,2200,2200,1100,1100,1100,1100],"XR":[0,0,0,0,0,0,0,0,0,0,0,0,0,0],"Y3":[0,0,0,0,0,0,0,0,0,0,0,0,0,0],"Y4":[500,500,500,500,500,0,0,0,0,0,0,0,0,0]},
         "md_rem":{"F4":[28,28,28,28,28,28,28,28,28,28,28,28,28,28],"GB":[1188,1188,1188,1188,1188,1188,1188,1188,1188,1188,1188,1188,1188,1188],"GL":[644,644,644,644,644,644,644,644,644,644,644,644,644,644],"GX":[0,0,0,0,0,0,0,0,0,0,0,0,0,0],"LG":[0,0,0,0,0,0,0,0,0,0,0,0,0,0],"MR":[347,347,347,347,347,347,347,347,347,347,347,347,347,347],"V1":[27,27,27,27,27,27,27,27,27,27,27,27,27,27],"XC":[0,0,0,0,0,0,0,0,0,0,0,0,0,0],"XD":[0,0,0,0,0,0,0,0,0,0,0,0,0,0],"XGB":[-241,-594,-947,-1300,-825,-825,-825,-825,-825,-825,-1653,-1653,-1653,-1653],"XGS":[-717,-737,-477,-217,43,-257,-557,-857,-57,743,1543,1243,943,3143],"XR":[0,0,0,0,0,0,0,0,0,0,0,0,0,0],"Y3":[24,24,24,24,24,24,24,24,24,24,24,24,24,24],"Y4":[-74,112,141,13,-115,-243,-871,-871,-871,-871,-871,-871,-871,-871]},
         "ta_daily":{"F4":[0,0,0,0,0,0,0,0,0,0,0,0,0,0],"GB":[0,0,0,0,0,0,0,0,0,0,0,0,0,0],"GL":[0,0,0,0,0,0,0,0,0,0,0,0,0,0],"GX":[0,0,0,0,0,0,0,0,0,0,0,0,0,0],"LG":[650,650,650,650,650,650,650,780,780,780,780,0,0,0],"MR":[0,0,0,0,0,0,0,0,0,0,0,0,0,0],"V1":[0,0,0,0,0,0,0,0,0,0,0,0,0,0],"XC":[1160,1160,1160,1160,580,0,0,0,0,0,0,0,0,0],"XD":[0,0,0,0,0,0,0,0,0,0,0,0,0,0],"XGB":[828,828,828,828,0,0,0,0,0,0,828,0,0,0],"XGS":[840,1120,840,840,840,1400,1400,1400,1400,1400,1400,1400,1400,0],"XR":[0,230,230,460,460,460,460,460,460,460,460,460,0,0],"Y3":[0,0,0,0,0,0,0,0,0,0,0,0,0,0],"Y4":[628,314,471,628,628,628,628,0,0,0,0,0,0,0]},
@@ -94,9 +97,24 @@ if "sus" not in st.session_state:
 
 # ═══ Geriye dönük uyumluluk: eski session'larda eksik TA fikstür anahtarlarını ekle ═══
 _default_sus = get_default_sus()
-for _k in ("ta_fixture_usage","ta_fixture_count","ta_per_cycle"):
+for _k in ("ta_fixture_usage","ta_fixture_count","ta_per_cycle","md_rates"):
     if _k not in st.session_state.sus:
         st.session_state.sus[_k] = _default_sus[_k]
+# md_alloc: tek satırlı eski hatları çok satırlıya çıkar
+for _ln in ("MD1","MD2"):
+    _rows = st.session_state.sus.get("md_alloc",{}).get(_ln, [])
+    if _rows and not isinstance(_rows[0], list):
+        st.session_state.sus["md_alloc"][_ln] = [_rows, [""]*len(_rows)]
+    elif len(_rows) < 2:
+        nd = len(st.session_state.sus["md_alloc"][_ln][0]) if _rows else 14
+        st.session_state.sus["md_alloc"][_ln].append([""]*nd)
+    # md_rates aynı sayıda satır olsun
+    n_alloc_rows = len(st.session_state.sus["md_alloc"][_ln])
+    md_rates_lines = st.session_state.sus.get("md_rates",{}).get(_ln, [])
+    while len(md_rates_lines) < n_alloc_rows:
+        nd = len(st.session_state.sus["md_alloc"][_ln][0])
+        md_rates_lines.append([1.0]*nd)
+    st.session_state.sus.setdefault("md_rates",{})[_ln] = md_rates_lines
 
 if "opt_result" not in st.session_state:
     st.session_state.opt_result = None
@@ -181,6 +199,10 @@ def extend_horizon(n_extra):
     for ln in sus.get("otd_rates", {}):
         arr = sus["otd_rates"][ln]
         if len(arr) < new_n: sus["otd_rates"][ln] = arr + [1.0] * (new_n - len(arr))
+    for ln in sus.get("md_rates", {}):
+        for row in sus["md_rates"][ln]:
+            if isinstance(row, list) and len(row) < new_n:
+                row.extend([1.0] * (new_n - len(row)))
     st.session_state.sus = recalc_stocks(sus)
 
 sus = st.session_state.sus
@@ -805,9 +827,17 @@ def make_alloc(alloc_dict, lines, d_idx=None, rates_dict=None):
         rows = alloc_dict.get(ln, [])
         if not rows: continue
         disp = rows if isinstance(rows[0], list) else [rows]
-        rates = rates_dict.get(ln, [1]*N_DAYS) if rates_dict else None
+        rates_all = rates_dict.get(ln, None) if rates_dict else None
+        rates_is_multi = bool(rates_all) and bool(rates_all) and isinstance(rates_all[0], list)
         for ri, row in enumerate(disp):
-            h += f'<tr><td class="otd-rh">{ln if ri==0 else ""}</td>'
+            if rates_is_multi:
+                rates = rates_all[ri] if ri < len(rates_all) else [1.0]*N_DAYS
+            else:
+                rates = rates_all
+            row_label = ln if ri == 0 else ""
+            if len(disp) > 1:
+                row_label = f"{ln}-{ri+1}"
+            h += f'<tr><td class="otd-rh">{row_label}</td>'
             for i in idx:
                 v = row[i] if i < len(row) else ""
                 if v:
@@ -861,28 +891,43 @@ def make_alloc_compare(alloc_new, alloc_ref, lines, d_idx=None, rates_dict=None)
     return h
 
 def make_rates_table(rates_dict, alloc_dict, lines, d_idx=None):
-    """Verimlilik oranları tablosu — alokasyondaki kart rengini arka plan olarak kullanır."""
+    """Verimlilik oranları tablosu — alokasyondaki kart rengini arka plan olarak kullanır.
+    Multi-row destekli: rates_dict[ln] hem flat liste hem list-of-list olabilir."""
     idx = d_idx if d_idx is not None else list(range(N_DAYS))
     h = '<table class="otd-table"><thead><tr><th style="text-align:left;">Hat</th>'
     for i in idx: h += f'<th>{SUS_DAYS[i]}<br><span style="font-size:0.58rem;opacity:0.7">{SUS_DATES[i]}</span></th>'
     h += '</tr></thead><tbody>'
     for ln in lines:
-        rates = rates_dict.get(ln, [1]*N_DAYS)
-        alloc_row = alloc_dict.get(ln, [""]*N_DAYS)
-        if isinstance(alloc_row[0] if alloc_row else "", list): alloc_row = alloc_row[0]
-        h += f'<tr><td class="otd-rh">{ln}</td>'
-        for i in idx:
-            rv = rates[i] if i < len(rates) else 1.0
-            card = alloc_row[i] if i < len(alloc_row) else ""
-            pct = int(rv * 100)
-            if not card:
-                h += '<td class="otd-none">—</td>'
-            elif rv < 1.0:
-                bg = KART_RENKLERI.get(card, "#666")
-                h += f'<td style="background:{bg};color:#1e293b;font-weight:800;font-size:0.82rem;">%{pct}</td>'
-            else:
-                h += f'<td style="background:rgba(255,255,255,0.06);color:#64748b;font-weight:500;">%{pct}</td>'
-        h += '</tr>'
+        rates_all = rates_dict.get(ln, [1]*N_DAYS)
+        alloc_raw = alloc_dict.get(ln, [""]*N_DAYS)
+        rates_is_multi = bool(rates_all) and isinstance(rates_all[0], list)
+        alloc_is_multi = bool(alloc_raw) and isinstance(alloc_raw[0], list)
+        if rates_is_multi or alloc_is_multi:
+            rates_rows = rates_all if rates_is_multi else [rates_all]
+            alloc_rows = alloc_raw if alloc_is_multi else [alloc_raw]
+            # En çok satıra göre genişlet
+            n_rows = max(len(rates_rows), len(alloc_rows))
+        else:
+            rates_rows = [rates_all]
+            alloc_rows = [alloc_raw]
+            n_rows = 1
+        for ri in range(n_rows):
+            rates = rates_rows[ri] if ri < len(rates_rows) else [1.0]*N_DAYS
+            alloc_row = alloc_rows[ri] if ri < len(alloc_rows) else [""]*N_DAYS
+            row_label = ln if n_rows == 1 else f"{ln}-{ri+1}"
+            h += f'<tr><td class="otd-rh">{row_label}</td>'
+            for i in idx:
+                rv = rates[i] if i < len(rates) else 1.0
+                card = alloc_row[i] if i < len(alloc_row) else ""
+                pct = int(rv * 100)
+                if not card:
+                    h += '<td class="otd-none">—</td>'
+                elif rv < 1.0:
+                    bg = KART_RENKLERI.get(card, "#666")
+                    h += f'<td style="background:{bg};color:#1e293b;font-weight:800;font-size:0.82rem;">%{pct}</td>'
+                else:
+                    h += f'<td style="background:rgba(255,255,255,0.06);color:#64748b;font-weight:500;">%{pct}</td>'
+            h += '</tr>'
     h += '</tbody></table>'
     return h
 
@@ -1086,19 +1131,19 @@ if st.session_state.auth:
 # =====================================================================
 # SEKMELER (sayfa başına taşındı, emojiler kaldırıldı)
 # =====================================================================
+# ── Üst marka banner'ı (büyük, sayfanın en üstünde) ──
+_lh_big = f'<img src="data:image/png;base64,{logo_b64}" style="height:54px;margin-left:18px;filter:drop-shadow(0 3px 10px rgba(37,99,235,0.5));">' if logo_b64 else ""
+st.markdown(f"""<div style="display:flex;align-items:center;justify-content:flex-end;margin:0 0 18px;padding:18px 26px;background:linear-gradient(90deg,rgba(2,10,31,0.85) 0%,rgba(4,18,46,0.95) 50%,rgba(2,10,31,0.85) 100%);border-radius:14px;backdrop-filter:blur(14px);border:1px solid rgba(147,197,253,0.18);box-shadow:0 4px 24px rgba(0,0,0,0.35);">
+    <div style="text-align:right;">
+        <div style="color:#fff;font-size:1.6rem;font-weight:800;letter-spacing:0.5px;line-height:1.1;">Çerkezköy Elektronik</div>
+        <div style="color:#93c5fd;font-size:0.82rem;letter-spacing:3px;text-transform:uppercase;font-weight:600;margin-top:4px;">Şasi → Montaj Planlama Sistemi</div>
+    </div>
+    {_lh_big}
+</div>""", unsafe_allow_html=True)
+
 tab_panel, tab_montaj, tab_opt, tab_rapor, tab_veri = st.tabs(
     ["Kontrol Paneli & Üretim Planı", "Montaj Planı", "Optimize Et", "Rapor & Geçişler", "Veri Yönetimi"]
 )
-
-# ── Üst marka şeridi (sekmelerden sonra, ince) ──
-_lh = f'<img src="data:image/png;base64,{logo_b64}" style="height:38px;margin-right:12px;filter:drop-shadow(0 2px 6px rgba(37,99,235,0.4));">' if logo_b64 else ""
-st.markdown(f"""<div style="display:flex;align-items:center;justify-content:flex-end;margin:8px 0 14px;padding:6px 14px;background:rgba(0,15,50,0.35);border-radius:10px;backdrop-filter:blur(8px);border:1px solid rgba(147,197,253,0.08);">
-    <div style="text-align:right;">
-        <div style="color:#fff;font-size:0.95rem;font-weight:700;letter-spacing:0.5px;">Çerkezköy Elektronik</div>
-        <div style="color:#93c5fd;font-size:0.7rem;letter-spacing:2px;text-transform:uppercase;font-weight:500;">Şasi → Montaj Planlama Sistemi</div>
-    </div>
-    {_lh.replace("margin-right:12px","margin-left:14px;margin-right:0")}
-</div>""", unsafe_allow_html=True)
 
 
 # =============  TAB 1: KONTROL PANELİ + ÜRETİM PLANI  =================
@@ -1575,7 +1620,10 @@ with tab_panel:
 
             with _md_ref_tab:
                 st.markdown("**Hat – Kart Alokasyonu**")
-                st.markdown(make_alloc(sus["md_alloc"], ["MD1","MD2"], d_idx=DATE_INDICES), unsafe_allow_html=True)
+                st.markdown(make_alloc(sus["md_alloc"], ["MD1","MD2"], d_idx=DATE_INDICES, rates_dict=sus.get("md_rates",{})), unsafe_allow_html=True)
+                with st.expander("📊 Verimlilik Oranları (MD)", expanded=False):
+                    st.caption("Hat bölünmesi (örn. 0.5+0.5) durumlarında satırlar ayrı gösterilir. %100 = tam verim, <%100 = bölünme/setup.")
+                    st.markdown(make_rates_table(sus.get("md_rates",{}), sus["md_alloc"], ["MD1","MD2"], d_idx=DATE_INDICES), unsafe_allow_html=True)
                 st.markdown("**Günlük Üretim**")
                 st.markdown(make_grid(sus["md_daily"], d_idx=DATE_INDICES), unsafe_allow_html=True)
                 st.markdown("**📦 Kalan Stok — KSM**")
@@ -1646,8 +1694,27 @@ with tab_panel:
                                 flat_old[label] = old_rows if ri == 0 else [""]*N_DAYS
                         md_setups = detect_setup_changes(flat_new, flat_old, [lbl for lbl,_,_ in md_row_labels])
 
+                        # MD oranlarını hesapla — mevcut oranları koru, setup değişiminde %50 öner
+                        new_md_rates = {"MD1": [], "MD2": []}
+                        for label, ln, ri in md_row_labels:
+                            old_rates_lines = sus.get("md_rates", {}).get(ln, [])
+                            old_rates = old_rates_lines[ri] if ri < len(old_rates_lines) else [1.0]*N_DAYS
+                            old_alloc_row = flat_old[label]
+                            rvals = []
+                            for i in range(N_DAYS):
+                                new_c = new_md_alloc[ln][ri][i]
+                                if new_c == (old_alloc_row[i] if i < len(old_alloc_row) else ""):
+                                    rvals.append(old_rates[i] if i < len(old_rates) else 1.0)
+                                elif not new_c:
+                                    rvals.append(1.0)
+                                else:
+                                    prev = new_md_alloc[ln][ri][i-1] if i > 0 else ""
+                                    rvals.append(SETUP_DEFAULT_RATE if (prev and prev != new_c) else 1.0)
+                            new_md_rates[ln].append(rvals)
+
                         st.session_state.md_preview_active = True
                         st.session_state.md_preview_alloc = new_md_alloc
+                        st.session_state.md_preview_rates = new_md_rates
                         st.session_state.md_preview_setups = md_setups
                         st.rerun()
                 with ec2:
@@ -1655,21 +1722,78 @@ with tab_panel:
                         if st.button("✗ MD Önizleme Kapat", use_container_width=True, key="btn_md_cancel"):
                             st.session_state.md_preview_active = False
                             st.session_state.md_preview_alloc = None
+                            st.session_state.md_preview_rates = None
                             st.session_state.md_preview_setups = None
                             st.rerun()
 
                 if st.session_state.md_preview_active and st.session_state.md_preview_alloc:
                     p_alloc = st.session_state.md_preview_alloc
-                    # MD için alloc_to_daily — multi-row destekli
+                    p_rates = st.session_state.md_preview_rates or {"MD1":[[1.0]*N_DAYS]*len(p_alloc.get("MD1",[])),
+                                                                    "MD2":[[1.0]*N_DAYS]*len(p_alloc.get("MD2",[]))}
+                    p_setups = st.session_state.md_preview_setups or []
+                    setup_items = [s for s in p_setups if s["suggested_rate"] < 1.0]
+
+                    # Setup oran düzenleme paneli
+                    if setup_items:
+                        st.write("---")
+                        st.markdown(f"""<div style="background:rgba(245,158,11,0.12);border:1px solid rgba(245,158,11,0.3);border-radius:10px;padding:12px 16px;">
+                            <span style="color:#f59e0b;font-weight:700;">⚠️ {len(setup_items)} MD Setup Değişikliği</span>
+                            <span style="color:#cbd5e1;font-size:0.82rem;"> — Oranları düzenleyebilirsiniz:</span>
+                        </div>""", unsafe_allow_html=True)
+                        for si, s in enumerate(setup_items):
+                            sc1, sc2, sc3 = st.columns([4, 2, 2])
+                            # label "MD1-1" → ln, ri
+                            try:
+                                parts = s["line"].split("-")
+                                ln_k = parts[0]
+                                ri_k = int(parts[1]) - 1
+                            except Exception:
+                                ln_k, ri_k = s["line"], 0
+                            with sc1:
+                                st.markdown(
+                                    f'<div style="color:#cbd5e1;font-size:0.85rem;padding-top:6px;">'
+                                    f'🔄 <strong style="color:#f59e0b;">{s["line"]}</strong> Gün {s["day"]} ({s["date"]}): '
+                                    f'<span style="color:#ef4444;">{s["prev_card"]}</span> → <span style="color:#22c55e;">{s["new_card"]}</span>'
+                                    f'</div>', unsafe_allow_html=True)
+                            with sc2:
+                                try:
+                                    cur_rate = p_rates[ln_k][ri_k][s["day_idx"]]
+                                except (KeyError, IndexError):
+                                    cur_rate = 1.0
+                                adj_rate = st.number_input(
+                                    f'Oran {s["line"]} G{s["day"]}', value=float(cur_rate),
+                                    min_value=0.0, max_value=1.0, step=0.05, format="%.2f",
+                                    key=f"md_setup_rate_{s['line']}_{s['day_idx']}",
+                                    label_visibility="collapsed"
+                                )
+                                if adj_rate != cur_rate:
+                                    st.session_state.md_preview_rates[ln_k][ri_k][s["day_idx"]] = adj_rate
+                            with sc3:
+                                pct = int(adj_rate * 100)
+                                clr = "#ef4444" if pct < 60 else "#f59e0b" if pct < 100 else "#22c55e"
+                                st.markdown(f'<div style="padding-top:8px;"><span style="color:{clr};font-weight:800;font-size:1rem;">%{pct}</span></div>', unsafe_allow_html=True)
+
+                    p_rates = st.session_state.md_preview_rates
+
+                    # MD için oran-aware alloc_to_daily — multi-row destekli
                     md_new_daily = {c: [0]*N_DAYS for c in SUS_CARDS}
                     for ln in ["MD1","MD2"]:
-                        for row in p_alloc.get(ln, []):
+                        rows = p_alloc.get(ln, [])
+                        rates_rows = p_rates.get(ln, [[1.0]*N_DAYS]*len(rows))
+                        for ri, row in enumerate(rows):
+                            row_rates = rates_rows[ri] if ri < len(rates_rows) else [1.0]*N_DAYS
                             for i, card in enumerate(row):
                                 if i < N_DAYS and card and card in MD_TEMPO.get(ln, {}):
-                                    md_new_daily[card][i] += MD_TEMPO[ln][card]
+                                    rate = row_rates[i] if i < len(row_rates) else 1.0
+                                    md_new_daily[card][i] += int(MD_TEMPO[ln][card] * rate)
+
+                    # Düzenlenmiş alokasyon + oranlar görünümü
+                    st.markdown("**📊 Düzenlenmiş MD Alokasyon & Oranlar:**")
+                    st.markdown(make_alloc(p_alloc, ["MD1","MD2"], d_idx=DATE_INDICES, rates_dict=p_rates), unsafe_allow_html=True)
 
                     preview_plan = copy.deepcopy(sus)
                     preview_plan["md_alloc"] = p_alloc
+                    preview_plan["md_rates"] = p_rates
                     preview_plan["md_daily"] = md_new_daily
                     preview_plan = recalc_stocks(preview_plan)
                     impact = compute_manual_impact(sus, preview_plan)
@@ -1708,6 +1832,7 @@ with tab_panel:
                             st.session_state.md_preview_active = False
                             st.session_state.md_preview_alloc = None
                             st.session_state.md_preview_setups = None
+                            st.session_state.md_preview_rates = None
                             st.success(f"✅ MD uygulandı! (Sicil: {st.session_state.auth_sicil})")
                             st.rerun()
                     else:
@@ -1727,6 +1852,7 @@ with tab_panel:
                                     st.session_state.md_preview_active = False
                                     st.session_state.md_preview_alloc = None
                                     st.session_state.md_preview_setups = None
+                                    st.session_state.md_preview_rates = None
                                     st.success(f"✅ Uygulandı! (Sicil: {apply_sicil_md.strip()})")
                                     st.rerun()
                                 else:
@@ -1738,7 +1864,7 @@ with tab_panel:
 
             with mt1:
                 st.markdown("**Hat – Kart Alokasyonu**")
-                st.markdown(make_alloc(sus["md_alloc"], ["MD1","MD2"], d_idx=DATE_INDICES), unsafe_allow_html=True)
+                st.markdown(make_alloc(sus["md_alloc"], ["MD1","MD2"], d_idx=DATE_INDICES, rates_dict=sus.get("md_rates",{})), unsafe_allow_html=True)
                 st.markdown("**Günlük Üretim**")
                 st.markdown(make_grid(sus["md_daily"], d_idx=DATE_INDICES), unsafe_allow_html=True)
                 st.markdown("**📦 Kalan Stok — KSM**")
