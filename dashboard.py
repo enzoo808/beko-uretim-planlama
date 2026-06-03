@@ -43,6 +43,17 @@ TEMPO = {
 MD_TEMPO = {"MD1":{"XGS":1100,"XGB":950,"Y4":1000,"F4":0,"GB":800,"GL":780,"MR":600,"V1":1000,"Y3":890},
             "MD2":{"XGS":1100,"XGB":950,"Y4":1000,"F4":0,"GB":800,"GL":780,"MR":600,"V1":1000,"Y3":890}}
 
+# ═══ TA Fikstür Parametreleri (Tempolar sayfasından — kullanıcı düzenleyebilir) ═══
+# Formül: ta_daily[c][t] = fikstür_kullanımı[c][t] × TA_ADET_DEFAULT[c]
+# Kısıt:  fikstür_kullanımı[c][t] ≤ 2 × TA_FIKSTUR_DEFAULT[c]
+TA_FIKSTUR_DEFAULT = {"F4":1,"GB":1,"GL":3,"GX":4,"LG":4,"MR":1,"V1":2,
+                      "XC":4,"XD":2,"XGB":3,"XGS":6,"XR":2,"Y3":2,"Y4":2}
+TA_ADET_DEFAULT    = {"F4":80,"GB":90,"GL":105,"GX":130,"LG":130,"MR":50,"V1":190,
+                      "XC":145,"XD":150,"XGB":138,"XGS":140,"XR":115,"Y3":160,"Y4":157}
+TA_TEST_SYS = {"F4":"TESTAR","GB":"TESTAR","GL":"TESTAR","GX":"IPTE","LG":"LG","MR":"TESTAR",
+               "V1":"TP200","XC":"IPTE","XD":"TESTAR","XGB":"TESTAR","XGS":"TESTAR",
+               "XR":"TESTAR","Y3":"TP200","Y4":"TP200"}
+
 # =====================================================================
 # VARSAYILAN SUS VERİSİ
 # =====================================================================
@@ -59,6 +70,20 @@ def get_default_sus():
         "ta_rem":{"F4":[349,349,349,349,349,349,349,349,349,349,349,349,349,349],"GB":[575,575,575,575,575,-90,-90,-90,-90,-90,-90,-90,-90,-90],"GL":[416,416,416,416,416,416,416,416,416,416,416,416,416,416],"GX":[667,667,667,117,117,117,-180,-180,-180,-180,-180,-180,-180,-180],"LG":[421,821,1421,1520,1220,369,-231,-729,-1092,-1313,-734,21,21,-5],"MR":[308,308,308,308,308,308,308,-45,-96,-96,-96,-96,-96,-96],"V1":[-9,-9,-9,-9,-9,-9,-9,-9,-9,-9,-9,-9,-9,-9],"XC":[1166,926,746,1156,1886,2466,2466,2466,2466,2466,2268,2268,1769,1282],"XD":[225,123,123,119,119,119,119,119,119,119,119,-616,-990,-1215],"XGB":[458,21,-237,-9,819,819,818,818,818,818,818,806,463,183],"XGS":[610,200,321,861,1701,2080,2534,2876,3076,1691,507,636,823,1380],"XR":[508,508,523,753,268,255,248,100,60,520,741,793,992,491],"Y3":[157,157,157,157,157,157,157,157,157,157,157,157,157,50],"Y4":[-99,529,843,214,-58,62,690,1318,1318,1318,1318,1318,1318,1318]},
         "assembly":{"F4":[0,0,0,0,0,0,0,0,0,0,0,0,0,0],"GB":[0,0,0,0,0,665,0,0,0,0,0,0,0,0],"GL":[0,0,0,0,0,0,0,0,0,0,0,0,0,0],"GX":[0,0,0,550,0,0,297,0,0,0,0,0,0,0],"LG":[279,250,50,551,950,1501,1250,1148,1143,1001,201,25,0,26],"MR":[0,0,0,0,0,0,0,353,51,0,0,0,0,0],"V1":[258,0,0,0,0,0,0,0,0,0,0,0,0,0],"XC":[618,1400,1340,750,430,0,0,0,0,0,198,0,499,487],"XD":[625,102,0,4,0,0,0,0,0,0,0,735,374,225],"XGB":[205,1265,1086,600,0,0,1,0,0,0,0,840,343,280],"XGS":[1681,1250,999,300,0,461,946,1058,1200,2785,2584,1271,1213,843],"XR":[2,0,215,0,945,473,467,608,500,0,239,408,261,501],"Y3":[0,0,0,0,0,0,0,0,0,0,0,0,0,107],"Y4":[881,0,0,1100,900,508,0,0,0,0,0,0,0,0]},
         "init":{"F4":{"o":238,"m":28,"t":349},"GB":{"o":0,"m":1188,"t":575},"GL":{"o":0,"m":644,"t":416},"GX":{"o":200,"m":60,"t":667},"LG":{"o":543,"m":257,"t":700},"MR":{"o":108,"m":347,"t":308},"V1":{"o":400,"m":27,"t":249},"XC":{"o":1814,"m":57,"t":1784},"XD":{"o":1069,"m":12,"t":850},"XGB":{"o":681,"m":587,"t":663},"XGS":{"o":2055,"m":123,"t":2291},"XR":{"o":380,"m":6,"t":510},"Y3":{"o":38,"m":24,"t":157},"Y4":{"o":1410,"m":554,"t":782}},
+        # ═══ TA Fikstür Kullanımı (kart × gün) — günde 2× fikstür_sayısı sınırlı ═══
+        "ta_fixture_usage":{
+            "F4":[0,0,0,0,0,0,0,0,0,0,0,0,0,0],"GB":[0,0,0,0,0,0,0,0,0,0,0,0,0,0],
+            "GL":[0,0,0,0,0,0,0,0,0,0,0,0,0,0],"GX":[0,0,0,0,0,0,0,0,0,0,0,0,0,0],
+            "LG":[5,5,5,5,5,5,5,6,6,6,6,0,0,0],"MR":[0,0,0,0,0,0,0,0,0,0,0,0,0,0],
+            "V1":[0,0,0,0,0,0,0,0,0,0,0,0,0,0],"XC":[8,8,8,8,4,0,0,0,0,0,0,0,0,0],
+            "XD":[0,0,0,0,0,0,0,0,0,0,0,0,0,0],"XGB":[6,6,6,6,0,0,0,0,0,0,6,0,0,0],
+            "XGS":[6,8,6,6,6,10,10,10,10,10,10,10,10,0],
+            "XR":[0,2,2,4,4,4,4,4,4,4,4,4,0,0],"Y3":[0,0,0,0,0,0,0,0,0,0,0,0,0,0],
+            "Y4":[4,2,3,4,4,4,4,0,0,0,0,0,0,0],
+        },
+        # ═══ TA parametreleri (kullanıcı düzenleyebilir, varsayılan Tempolar sayfasından) ═══
+        "ta_fixture_count":dict(TA_FIKSTUR_DEFAULT),
+        "ta_per_cycle":dict(TA_ADET_DEFAULT),
     }
 
 # =====================================================================
@@ -66,6 +91,13 @@ def get_default_sus():
 # =====================================================================
 if "sus" not in st.session_state:
     st.session_state.sus = get_default_sus()
+
+# ═══ Geriye dönük uyumluluk: eski session'larda eksik TA fikstür anahtarlarını ekle ═══
+_default_sus = get_default_sus()
+for _k in ("ta_fixture_usage","ta_fixture_count","ta_per_cycle"):
+    if _k not in st.session_state.sus:
+        st.session_state.sus[_k] = _default_sus[_k]
+
 if "opt_result" not in st.session_state:
     st.session_state.opt_result = None
 if "auth" not in st.session_state:
@@ -91,6 +123,16 @@ if "preview_active" not in st.session_state: st.session_state.preview_active = F
 if "preview_alloc" not in st.session_state: st.session_state.preview_alloc = None
 if "preview_rates" not in st.session_state: st.session_state.preview_rates = None
 if "preview_setups" not in st.session_state: st.session_state.preview_setups = None
+# ═══ MD Manuel Düzenleme önizlemesi ═══
+if "md_preview_active" not in st.session_state: st.session_state.md_preview_active = False
+if "md_preview_alloc"  not in st.session_state: st.session_state.md_preview_alloc  = None
+if "md_preview_rates"  not in st.session_state: st.session_state.md_preview_rates  = None
+if "md_preview_setups" not in st.session_state: st.session_state.md_preview_setups = None
+# ═══ TA Manuel Düzenleme önizlemesi ═══
+if "ta_preview_active"  not in st.session_state: st.session_state.ta_preview_active  = False
+if "ta_preview_usage"   not in st.session_state: st.session_state.ta_preview_usage   = None
+if "ta_preview_fcount"  not in st.session_state: st.session_state.ta_preview_fcount  = None
+if "ta_preview_percycle" not in st.session_state: st.session_state.ta_preview_percycle = None
 
 # ═══ v3.5: Dinamik planlama ufku ═══
 if "dyn_dates" not in st.session_state: st.session_state.dyn_dates = list(_DEFAULT_DATES)
@@ -117,7 +159,7 @@ def extend_horizon(n_extra):
     # Tüm veri dizilerini pad'le
     sus = st.session_state.sus
     new_n = len(st.session_state.dyn_dates)
-    for key in ["otd_daily","otd_rem","md_daily","md_rem","ta_daily","ta_rem","assembly"]:
+    for key in ["otd_daily","otd_rem","md_daily","md_rem","ta_daily","ta_rem","assembly","ta_fixture_usage"]:
         for c in SUS_CARDS:
             arr = sus.get(key, {}).get(c, [])
             if len(arr) < new_n:
@@ -641,6 +683,57 @@ def make_alloc_rates_combined(alloc_dict, rates_dict, lines, d_idx=None):
             h += '</tr>'
     h += '</tbody></table>'
     return h
+
+# ═══ TA FİKSTÜR YARDIMCILARI ═══
+def fixture_usage_to_ta_daily(fixture_usage, per_cycle):
+    """Fikstür kullanım sayısını TA günlük üretimine çevirir.
+    ta_daily[c][t] = fikstür_kullanımı[c][t] × adet_per_cycle[c]"""
+    nd = len(st.session_state.dyn_dates)
+    daily = {}
+    for c in SUS_CARDS:
+        use = fixture_usage.get(c, [0]*nd)
+        rate = per_cycle.get(c, 0)
+        daily[c] = [int((use[i] if i < len(use) else 0) * rate) for i in range(nd)]
+    return daily
+
+def detect_fixture_violations(usage_dict, fcount_dict):
+    """2× fikstür sayısı kısıtını aşan günleri tespit eder."""
+    viols = []
+    for c in SUS_CARDS:
+        cap = 2 * fcount_dict.get(c, 0)
+        use = usage_dict.get(c, [])
+        for i, v in enumerate(use):
+            if v > cap:
+                viols.append({"card": c, "day": i+1, "date": SUS_DATES[i] if i < len(SUS_DATES) else f"G{i+1}",
+                              "used": v, "cap": cap, "excess": v - cap})
+    return viols
+
+def make_fixture_grid(usage_dict, fcount_dict, d_idx=None, editable_ref=None):
+    """TA fikstür kullanım tablosu — limit aşımları kırmızı, fikstür sayısı kolonunda."""
+    idx = d_idx if d_idx is not None else list(range(N_DAYS))
+    h = '<table class="otd-table"><thead><tr><th style="text-align:left;">Kart</th><th>Fix.×2</th>'
+    for i in idx: h += f'<th>{SUS_DAYS[i]}<br><span style="font-size:0.58rem;opacity:0.7">{SUS_DATES[i]}</span></th>'
+    h += '</tr></thead><tbody>'
+    for c in SUS_CARDS:
+        bg = KART_RENKLERI.get(c, "#888")
+        cap = 2 * fcount_dict.get(c, 0)
+        h += f'<tr><td class="otd-rh" style="background:{bg};color:#1e293b;font-weight:800;">{c}</td>'
+        h += f'<td style="text-align:center;color:#93c5fd;font-weight:700;">{fcount_dict.get(c,0)}×2={cap}</td>'
+        use = usage_dict.get(c, [0]*N_DAYS)
+        for i in idx:
+            v = use[i] if i < len(use) else 0
+            if v == 0:
+                h += '<td class="otd-none">—</td>'
+            elif v > cap:
+                h += f'<td style="background:rgba(239,68,68,0.35);color:#fff;font-weight:800;">{v}⚠</td>'
+            elif v == cap:
+                h += f'<td style="background:rgba(245,158,11,0.25);color:#fbbf24;font-weight:700;">{v}</td>'
+            else:
+                h += f'<td style="color:#e2e8f0;">{v}</td>'
+        h += '</tr>'
+    h += '</tbody></table>'
+    return h
+
 def make_grid(card_data, init_key=None, d_idx=None):
     idx = d_idx if d_idx is not None else list(range(N_DAYS))
     h = '<table class="otd-table"><thead><tr><th style="text-align:left;">Kart</th>'
@@ -993,8 +1086,8 @@ if st.session_state.auth:
 # =====================================================================
 # SEKMELER (sayfa başına taşındı, emojiler kaldırıldı)
 # =====================================================================
-tab_panel, tab_opt, tab_rapor, tab_veri = st.tabs(
-    ["Kontrol Paneli & Üretim Planı", "Optimize Et", "Rapor & Geçişler", "Veri Yönetimi"]
+tab_panel, tab_montaj, tab_opt, tab_rapor, tab_veri = st.tabs(
+    ["Kontrol Paneli & Üretim Planı", "Montaj Planı", "Optimize Et", "Rapor & Geçişler", "Veri Yönetimi"]
 )
 
 # ── Üst marka şeridi (sekmelerden sonra, ince) ──
@@ -1478,12 +1571,166 @@ with tab_panel:
         md_res = st.session_state.md_opt_res
 
         if md_res is None:
-            st.markdown("**Hat – Kart Alokasyonu**")
-            st.markdown(make_alloc(sus["md_alloc"], ["MD1","MD2"], d_idx=DATE_INDICES), unsafe_allow_html=True)
-            st.markdown("**Günlük Üretim**")
-            st.markdown(make_grid(sus["md_daily"], d_idx=DATE_INDICES), unsafe_allow_html=True)
-            st.markdown("**📦 Kalan Stok — KSM**")
-            st.markdown(make_grid(sus["md_rem"], "m", d_idx=DATE_INDICES), unsafe_allow_html=True)
+            _md_ref_tab, _md_edit_tab = st.tabs(["📋 Görüntüle", "✏️ Manuel Düzenle"])
+
+            with _md_ref_tab:
+                st.markdown("**Hat – Kart Alokasyonu**")
+                st.markdown(make_alloc(sus["md_alloc"], ["MD1","MD2"], d_idx=DATE_INDICES), unsafe_allow_html=True)
+                st.markdown("**Günlük Üretim**")
+                st.markdown(make_grid(sus["md_daily"], d_idx=DATE_INDICES), unsafe_allow_html=True)
+                st.markdown("**📦 Kalan Stok — KSM**")
+                st.markdown(make_grid(sus["md_rem"], "m", d_idx=DATE_INDICES), unsafe_allow_html=True)
+
+            with _md_edit_tab:
+                st.markdown("""<div style="background:rgba(37,99,235,0.12);border:1px solid rgba(37,99,235,0.3);border-radius:10px;padding:12px 16px;margin-bottom:12px;">
+                    <span style="color:#93c5fd;font-weight:700;">✏️ MD Manuel Alokasyon Düzenleme</span><br>
+                    <span style="color:#cbd5e1;font-size:0.82rem;">MD2 hattının paralel satırları ayrı satır olarak düzenlenebilir (MD2-1, MD2-2).</span>
+                </div>""", unsafe_allow_html=True)
+
+                with st.expander("📖 Hat — Kart Uyumluluk Tablosu", expanded=False):
+                    md_compat = []
+                    for ln in ["MD1","MD2"]:
+                        cards = sorted([c for c in MD_TEMPO.get(ln, {}) if MD_TEMPO[ln][c] > 0])
+                        md_compat.append({"Hat": ln, "Üretilebilir": ", ".join(cards),
+                                          "Tempoları": " | ".join([f"{c}:{MD_TEMPO[ln][c]}" for c in cards])})
+                    st.dataframe(pd.DataFrame(md_compat), use_container_width=True, hide_index=True)
+
+                # Çok satırlı yapıyı düzleştir: MD1-1, MD2-1, MD2-2 ...
+                md_row_labels = []
+                md_row_data = {}
+                for ln in ["MD1","MD2"]:
+                    rows = sus["md_alloc"].get(ln, [])
+                    if not rows: continue
+                    if not isinstance(rows[0], list): rows = [rows]
+                    for ri, row in enumerate(rows):
+                        label = f"{ln}-{ri+1}"
+                        md_row_labels.append((label, ln, ri))
+                        md_row_data[label] = {f"{SUS_DAYS[i]} {SUS_DATES[i]}": (row[i] if i < len(row) else "") for i in range(N_DAYS)}
+
+                st.markdown("**🎯 MD Kart Ataması:**")
+                df_md_edit = pd.DataFrame(md_row_data).T
+                df_md_edit.index.name = "Hat-Satır"
+                # Sadece MD'ye uğrayan kartları seçenek olarak göster
+                md_cards = [c for c in SUS_CARDS if PROCESS_MAP.get(c)]
+                edited_md = st.data_editor(
+                    df_md_edit, use_container_width=True, num_rows="fixed",
+                    key="md_alloc_editor",
+                    column_config={
+                        col: st.column_config.SelectboxColumn(
+                            col, options=[""] + md_cards, default="", width="small"
+                        ) for col in df_md_edit.columns
+                    }
+                )
+
+                ec1, ec2, _ = st.columns([2, 2, 4])
+                with ec1:
+                    if st.button("🔍 MD Etkisini Önizle", type="primary", use_container_width=True, key="btn_md_preview"):
+                        # Düzlenmiş satırları tekrar MD1/MD2 yapısına geri çevir
+                        new_md_alloc = {"MD1": [], "MD2": []}
+                        for label, ln, ri in md_row_labels:
+                            rv = []
+                            for i in range(N_DAYS):
+                                cn = f"{SUS_DAYS[i]} {SUS_DATES[i]}"
+                                cell = str(edited_md.loc[label, cn]).strip() if cn in edited_md.columns else ""
+                                rv.append(cell if cell in md_cards else "")
+                            new_md_alloc[ln].append(rv)
+                        # Setup tespiti (her satırı ayrı bir "hat" gibi değerlendir)
+                        flat_new = {}
+                        flat_old = {}
+                        for label, ln, ri in md_row_labels:
+                            flat_new[label] = new_md_alloc[ln][ri]
+                            old_rows = sus["md_alloc"].get(ln, [])
+                            if old_rows and isinstance(old_rows[0], list):
+                                flat_old[label] = old_rows[ri] if ri < len(old_rows) else [""]*N_DAYS
+                            else:
+                                flat_old[label] = old_rows if ri == 0 else [""]*N_DAYS
+                        md_setups = detect_setup_changes(flat_new, flat_old, [lbl for lbl,_,_ in md_row_labels])
+
+                        st.session_state.md_preview_active = True
+                        st.session_state.md_preview_alloc = new_md_alloc
+                        st.session_state.md_preview_setups = md_setups
+                        st.rerun()
+                with ec2:
+                    if st.session_state.md_preview_active:
+                        if st.button("✗ MD Önizleme Kapat", use_container_width=True, key="btn_md_cancel"):
+                            st.session_state.md_preview_active = False
+                            st.session_state.md_preview_alloc = None
+                            st.session_state.md_preview_setups = None
+                            st.rerun()
+
+                if st.session_state.md_preview_active and st.session_state.md_preview_alloc:
+                    p_alloc = st.session_state.md_preview_alloc
+                    # MD için alloc_to_daily — multi-row destekli
+                    md_new_daily = {c: [0]*N_DAYS for c in SUS_CARDS}
+                    for ln in ["MD1","MD2"]:
+                        for row in p_alloc.get(ln, []):
+                            for i, card in enumerate(row):
+                                if i < N_DAYS and card and card in MD_TEMPO.get(ln, {}):
+                                    md_new_daily[card][i] += MD_TEMPO[ln][card]
+
+                    preview_plan = copy.deepcopy(sus)
+                    preview_plan["md_alloc"] = p_alloc
+                    preview_plan["md_daily"] = md_new_daily
+                    preview_plan = recalc_stocks(preview_plan)
+                    impact = compute_manual_impact(sus, preview_plan)
+
+                    st.write("---")
+                    st.markdown("### 🔍 MD Değişiklik Etki Analizi")
+                    ic1, ic2, ic3, ic4 = st.columns(4)
+                    old_viol = sum(1 for c in SUS_CARDS if PROCESS_MAP.get(c) for v in sus["md_rem"].get(c,[]) if v<0)
+                    new_viol = sum(1 for c in SUS_CARDS if PROCESS_MAP.get(c) for v in preview_plan["md_rem"].get(c,[]) if v<0)
+                    old_total = sum(sum(v) for v in sus["md_daily"].values())
+                    new_total = sum(sum(v) for v in preview_plan["md_daily"].values())
+                    with ic1: st.metric("KSM İhlal (Önce)", f"{old_viol} gün×kart")
+                    with ic2: st.metric("KSM İhlal (Sonra)", f"{new_viol} gün×kart", delta=f"{new_viol-old_viol:+d}", delta_color="inverse")
+                    with ic3: st.metric("MD Üretim (Önce)", f"{old_total:,}")
+                    with ic4: st.metric("MD Üretim (Sonra)", f"{new_total:,}", delta=f"{new_total-old_total:+,}")
+
+                    if impact["changes"]:
+                        st.markdown("**📋 Stok Değişimleri (MD odaklı):**")
+                        cdf = pd.DataFrame([c for c in impact["changes"] if c["stage"] in ("KSM","KST","KSO")])
+                        if not cdf.empty:
+                            cdf = cdf.rename(columns={"card":"Kart","stage":"Aşama","day":"Gün","date":"Tarih","old":"Önce","new":"Sonra","diff":"Fark","status":"Durum"})
+                            cdf["Durum"] = cdf["Durum"].map({"fixed":"✅ Çözüldü","new_violation":"❌ Yeni İhlal","changed":"🔄 Değişti"})
+                            st.dataframe(cdf[["Kart","Aşama","Gün","Tarih","Önce","Sonra","Fark","Durum"]], use_container_width=True, hide_index=True, height=min(400, 40+35*len(cdf)))
+
+                    with st.expander("📈 MD Detaylı Tablolar", expanded=False):
+                        st.markdown("**Yeni MD Günlük Üretim:**")
+                        st.markdown(make_grid_plan(md_new_daily, sus["md_daily"], d_idx=DATE_INDICES), unsafe_allow_html=True)
+                        st.markdown("**📦 Yeni KSM:**")
+                        st.markdown(make_grid_plan(preview_plan["md_rem"], sus["md_rem"], "m", d_idx=DATE_INDICES), unsafe_allow_html=True)
+
+                    st.write("---")
+                    if st.session_state.auth:
+                        if st.button("✅ MD Alokasyonu Uygula", type="primary", use_container_width=True, key="btn_md_apply_final"):
+                            st.session_state.sus = preview_plan
+                            st.session_state.md_opt_res = None
+                            st.session_state.md_preview_active = False
+                            st.session_state.md_preview_alloc = None
+                            st.session_state.md_preview_setups = None
+                            st.success(f"✅ MD uygulandı! (Sicil: {st.session_state.auth_sicil})")
+                            st.rerun()
+                    else:
+                        st.markdown("""<div style="background:rgba(239,68,68,0.12);border:1px solid rgba(239,68,68,0.3);border-radius:10px;padding:12px 16px;">
+                            <span style="color:#ef4444;font-weight:700;">🔒 Yetkilendirme Gerekli</span> <span style="color:#cbd5e1;font-size:0.82rem;">— Sicil numaranızı girin.</span>
+                        </div>""", unsafe_allow_html=True)
+                        ap1, ap2 = st.columns([3, 1])
+                        with ap1:
+                            apply_sicil_md = st.text_input("Sicil:", type="password", placeholder="Sicil numaranız", key="apply_sicil_md", label_visibility="collapsed")
+                        with ap2:
+                            if st.button("🔓 MD Doğrula & Uygula", type="primary", use_container_width=True, key="apply_sicil_md_btn"):
+                                if apply_sicil_md.strip() in YETKILI_SICILLER:
+                                    st.session_state.auth = True
+                                    st.session_state.auth_sicil = apply_sicil_md.strip()
+                                    st.session_state.sus = preview_plan
+                                    st.session_state.md_opt_res = None
+                                    st.session_state.md_preview_active = False
+                                    st.session_state.md_preview_alloc = None
+                                    st.session_state.md_preview_setups = None
+                                    st.success(f"✅ Uygulandı! (Sicil: {apply_sicil_md.strip()})")
+                                    st.rerun()
+                                else:
+                                    st.error("❌ Yetkisiz sicil numarası.")
 
         else:
             mt1, mt2 = st.tabs(["📋 Referans Plan (Mevcut)", "⚡ Optimize Sonucu"])
@@ -1592,12 +1839,182 @@ with tab_panel:
         ta_res = st.session_state.ta_opt_res
 
         if ta_res is None:
-            st.markdown("**Günlük Üretim**")
-            st.markdown(make_grid(sus["ta_daily"], d_idx=DATE_INDICES), unsafe_allow_html=True)
-            st.markdown("**📦 Kalan Stok — KST**")
-            st.markdown(make_grid(sus["ta_rem"], "t", d_idx=DATE_INDICES), unsafe_allow_html=True)
-            st.markdown("**🎯 Montaj Planı (Talep)**")
-            st.markdown(make_grid(sus["assembly"], d_idx=DATE_INDICES), unsafe_allow_html=True)
+            _ta_ref_tab, _ta_edit_tab = st.tabs(["📋 Görüntüle", "✏️ Manuel Düzenle"])
+
+            with _ta_ref_tab:
+                st.markdown("**Günlük TA Üretim**")
+                st.markdown(make_grid(sus["ta_daily"], d_idx=DATE_INDICES), unsafe_allow_html=True)
+                st.markdown("**🔧 Fikstür Kullanımı (gün başına)**")
+                st.caption("🔴 Kırmızı = 2× fikstür sayısını aşan (kısıt ihlali) · 🟡 Sarı = limit tam (2×)")
+                st.markdown(make_fixture_grid(sus["ta_fixture_usage"], sus["ta_fixture_count"], d_idx=DATE_INDICES), unsafe_allow_html=True)
+                st.markdown("**📦 Kalan Stok — KST**")
+                st.markdown(make_grid(sus["ta_rem"], "t", d_idx=DATE_INDICES), unsafe_allow_html=True)
+
+            with _ta_edit_tab:
+                st.markdown("""<div style="background:rgba(37,99,235,0.12);border:1px solid rgba(37,99,235,0.3);border-radius:10px;padding:12px 16px;margin-bottom:12px;">
+                    <span style="color:#93c5fd;font-weight:700;">✏️ TA Fikstür Kullanım Düzenleme</span><br>
+                    <span style="color:#cbd5e1;font-size:0.82rem;">Günlük fikstür kullanım sayısını girin. Kısıt: <code>Fikstür[c,t] ≤ 2 × N_fix[c]</code>. Üretim: <code>ta_daily = Fikstür × Adet/cycle</code></span>
+                </div>""", unsafe_allow_html=True)
+
+                # ═══ Fikstür sayısı + adet/cycle parametreleri (manuel düzenlenebilir) ═══
+                with st.expander("⚙️ TA Parametreleri (Fikstür Sayısı & Adet/Cycle)", expanded=False):
+                    param_df = pd.DataFrame({
+                        "Kart": SUS_CARDS,
+                        "Test Sistemi": [TA_TEST_SYS.get(c,"—") for c in SUS_CARDS],
+                        "Fikstür Sayısı": [sus["ta_fixture_count"].get(c, TA_FIKSTUR_DEFAULT.get(c,0)) for c in SUS_CARDS],
+                        "Adet/Cycle": [sus["ta_per_cycle"].get(c, TA_ADET_DEFAULT.get(c,0)) for c in SUS_CARDS],
+                    })
+                    edited_params = st.data_editor(
+                        param_df, use_container_width=True, num_rows="fixed", key="ta_param_editor",
+                        column_config={
+                            "Kart": st.column_config.TextColumn("Kart", disabled=True),
+                            "Test Sistemi": st.column_config.TextColumn("Test Sistemi", disabled=True),
+                            "Fikstür Sayısı": st.column_config.NumberColumn("Fikstür Sayısı", min_value=0, max_value=20, step=1),
+                            "Adet/Cycle": st.column_config.NumberColumn("Adet/Cycle", min_value=0, max_value=500, step=1),
+                        },
+                        hide_index=True,
+                    )
+                    pc1, pc2 = st.columns([2,4])
+                    with pc1:
+                        if st.button("💾 Parametreleri Kaydet", type="secondary", key="btn_save_ta_params"):
+                            new_fc = {row["Kart"]: int(row["Fikstür Sayısı"]) for _, row in edited_params.iterrows()}
+                            new_pc = {row["Kart"]: int(row["Adet/Cycle"])   for _, row in edited_params.iterrows()}
+                            st.session_state.sus["ta_fixture_count"] = new_fc
+                            st.session_state.sus["ta_per_cycle"]    = new_pc
+                            # ta_daily'yi mevcut fikstür kullanımıyla yeniden hesapla
+                            new_td = fixture_usage_to_ta_daily(st.session_state.sus["ta_fixture_usage"], new_pc)
+                            st.session_state.sus["ta_daily"] = new_td
+                            st.session_state.sus = recalc_stocks(st.session_state.sus)
+                            st.success("✅ TA parametreleri kaydedildi, üretim ve stoklar yeniden hesaplandı.")
+                            st.rerun()
+                    with pc2:
+                        if st.button("🔄 Varsayılana Sıfırla", key="btn_reset_ta_params"):
+                            st.session_state.sus["ta_fixture_count"] = dict(TA_FIKSTUR_DEFAULT)
+                            st.session_state.sus["ta_per_cycle"]    = dict(TA_ADET_DEFAULT)
+                            new_td = fixture_usage_to_ta_daily(st.session_state.sus["ta_fixture_usage"], TA_ADET_DEFAULT)
+                            st.session_state.sus["ta_daily"] = new_td
+                            st.session_state.sus = recalc_stocks(st.session_state.sus)
+                            st.success("✅ TA parametreleri varsayılana döndürüldü.")
+                            st.rerun()
+
+                # ═══ Fikstür kullanım editörü ═══
+                st.markdown("**🔧 Günlük Fikstür Kullanım Sayıları (kart × gün):**")
+                fix_data = {}
+                for c in SUS_CARDS:
+                    row = sus["ta_fixture_usage"].get(c, [0]*N_DAYS)
+                    fix_data[c] = {f"{SUS_DAYS[i]} {SUS_DATES[i]}": int(row[i] if i < len(row) else 0) for i in range(N_DAYS)}
+                df_fix = pd.DataFrame(fix_data).T
+                df_fix.index.name = "Kart"
+                edited_fix = st.data_editor(
+                    df_fix, use_container_width=True, num_rows="fixed", key="ta_fix_editor",
+                    column_config={
+                        col: st.column_config.NumberColumn(col, min_value=0, max_value=30, step=1, width="small")
+                        for col in df_fix.columns
+                    }
+                )
+
+                ec1, ec2, _ = st.columns([2, 2, 4])
+                with ec1:
+                    if st.button("🔍 TA Etkisini Önizle", type="primary", use_container_width=True, key="btn_ta_preview"):
+                        new_usage = {}
+                        for c in SUS_CARDS:
+                            rv = []
+                            for i in range(N_DAYS):
+                                cn = f"{SUS_DAYS[i]} {SUS_DATES[i]}"
+                                rv.append(int(edited_fix.loc[c, cn]) if cn in edited_fix.columns else 0)
+                            new_usage[c] = rv
+                        st.session_state.ta_preview_active = True
+                        st.session_state.ta_preview_usage  = new_usage
+                        st.session_state.ta_preview_fcount = dict(sus["ta_fixture_count"])
+                        st.session_state.ta_preview_percycle = dict(sus["ta_per_cycle"])
+                        st.rerun()
+                with ec2:
+                    if st.session_state.ta_preview_active:
+                        if st.button("✗ TA Önizleme Kapat", use_container_width=True, key="btn_ta_cancel"):
+                            st.session_state.ta_preview_active = False
+                            st.session_state.ta_preview_usage  = None
+                            st.rerun()
+
+                if st.session_state.ta_preview_active and st.session_state.ta_preview_usage:
+                    p_use = st.session_state.ta_preview_usage
+                    p_fc  = st.session_state.ta_preview_fcount  or sus["ta_fixture_count"]
+                    p_pc  = st.session_state.ta_preview_percycle or sus["ta_per_cycle"]
+
+                    # Kısıt ihlali tespiti
+                    fix_viols = detect_fixture_violations(p_use, p_fc)
+                    if fix_viols:
+                        st.markdown(f"""<div style="background:rgba(239,68,68,0.15);border:1px solid rgba(239,68,68,0.4);border-radius:10px;padding:10px 14px;margin:10px 0;">
+                            <span style="color:#ef4444;font-weight:700;">⚠️ {len(fix_viols)} Fikstür Kısıt İhlali</span>
+                            <span style="color:#cbd5e1;font-size:0.82rem;"> — Bu günlerde fikstür kullanımı 2× sayıyı aşıyor.</span>
+                        </div>""", unsafe_allow_html=True)
+                        for v in fix_viols[:10]:
+                            st.markdown(f'<div style="color:#fca5a5;font-size:0.82rem;padding:2px 0 2px 14px;">• {v["card"]} Gün {v["day"]} ({v["date"]}): {v["used"]} kullanım > {v["cap"]} limit (fazla: {v["excess"]})</div>', unsafe_allow_html=True)
+
+                    new_ta_daily = fixture_usage_to_ta_daily(p_use, p_pc)
+                    preview_plan = copy.deepcopy(sus)
+                    preview_plan["ta_fixture_usage"] = p_use
+                    preview_plan["ta_fixture_count"] = p_fc
+                    preview_plan["ta_per_cycle"]    = p_pc
+                    preview_plan["ta_daily"]        = new_ta_daily
+                    preview_plan = recalc_stocks(preview_plan)
+                    impact = compute_manual_impact(sus, preview_plan)
+
+                    st.write("---")
+                    st.markdown("### 🔍 TA Değişiklik Etki Analizi")
+                    ic1, ic2, ic3, ic4 = st.columns(4)
+                    old_viol = sum(1 for c in SUS_CARDS for v in sus["ta_rem"].get(c,[]) if v<0)
+                    new_viol = sum(1 for c in SUS_CARDS for v in preview_plan["ta_rem"].get(c,[]) if v<0)
+                    old_total = sum(sum(v) for v in sus["ta_daily"].values())
+                    new_total = sum(sum(v) for v in preview_plan["ta_daily"].values())
+                    with ic1: st.metric("KST İhlal (Önce)", f"{old_viol} gün×kart")
+                    with ic2: st.metric("KST İhlal (Sonra)", f"{new_viol} gün×kart", delta=f"{new_viol-old_viol:+d}", delta_color="inverse")
+                    with ic3: st.metric("TA Üretim (Önce)", f"{old_total:,}")
+                    with ic4: st.metric("TA Üretim (Sonra)", f"{new_total:,}", delta=f"{new_total-old_total:+,}")
+
+                    if impact["changes"]:
+                        st.markdown("**📋 KST/KSM/KSO Stok Değişimleri:**")
+                        cdf = pd.DataFrame(impact["changes"])
+                        cdf = cdf.rename(columns={"card":"Kart","stage":"Aşama","day":"Gün","date":"Tarih","old":"Önce","new":"Sonra","diff":"Fark","status":"Durum"})
+                        cdf["Durum"] = cdf["Durum"].map({"fixed":"✅ Çözüldü","new_violation":"❌ Yeni İhlal","changed":"🔄 Değişti"})
+                        st.dataframe(cdf[["Kart","Aşama","Gün","Tarih","Önce","Sonra","Fark","Durum"]], use_container_width=True, hide_index=True, height=min(400, 40+35*len(cdf)))
+
+                    with st.expander("📈 TA Detaylı Tablolar", expanded=False):
+                        st.markdown("**Yeni Fikstür Kullanımı:**")
+                        st.markdown(make_fixture_grid(p_use, p_fc, d_idx=DATE_INDICES), unsafe_allow_html=True)
+                        st.markdown("**Yeni TA Günlük Üretim:**")
+                        st.markdown(make_grid_plan(new_ta_daily, sus["ta_daily"], d_idx=DATE_INDICES), unsafe_allow_html=True)
+                        st.markdown("**📦 Yeni KST:**")
+                        st.markdown(make_grid_plan(preview_plan["ta_rem"], sus["ta_rem"], "t", d_idx=DATE_INDICES), unsafe_allow_html=True)
+
+                    st.write("---")
+                    if st.session_state.auth:
+                        if st.button("✅ TA Fikstür Kullanımını Uygula", type="primary", use_container_width=True, key="btn_ta_apply_final"):
+                            st.session_state.sus = preview_plan
+                            st.session_state.ta_opt_res = None
+                            st.session_state.ta_preview_active = False
+                            st.session_state.ta_preview_usage = None
+                            st.success(f"✅ TA uygulandı! (Sicil: {st.session_state.auth_sicil})")
+                            st.rerun()
+                    else:
+                        st.markdown("""<div style="background:rgba(239,68,68,0.12);border:1px solid rgba(239,68,68,0.3);border-radius:10px;padding:12px 16px;">
+                            <span style="color:#ef4444;font-weight:700;">🔒 Yetkilendirme Gerekli</span> <span style="color:#cbd5e1;font-size:0.82rem;">— Sicil numaranızı girin.</span>
+                        </div>""", unsafe_allow_html=True)
+                        ap1, ap2 = st.columns([3, 1])
+                        with ap1:
+                            apply_sicil_ta = st.text_input("Sicil:", type="password", placeholder="Sicil numaranız", key="apply_sicil_ta", label_visibility="collapsed")
+                        with ap2:
+                            if st.button("🔓 TA Doğrula & Uygula", type="primary", use_container_width=True, key="apply_sicil_ta_btn"):
+                                if apply_sicil_ta.strip() in YETKILI_SICILLER:
+                                    st.session_state.auth = True
+                                    st.session_state.auth_sicil = apply_sicil_ta.strip()
+                                    st.session_state.sus = preview_plan
+                                    st.session_state.ta_opt_res = None
+                                    st.session_state.ta_preview_active = False
+                                    st.session_state.ta_preview_usage = None
+                                    st.success(f"✅ Uygulandı! (Sicil: {apply_sicil_ta.strip()})")
+                                    st.rerun()
+                                else:
+                                    st.error("❌ Yetkisiz sicil numarası.")
 
         else:
             tt1, tt2 = st.tabs(["📋 Referans Plan (Mevcut)", "⚡ Optimize Sonucu"])
@@ -1608,8 +2025,6 @@ with tab_panel:
                 st.markdown(make_grid(sus["ta_daily"], d_idx=DATE_INDICES), unsafe_allow_html=True)
                 st.markdown("**📦 Kalan Stok — KST**")
                 st.markdown(make_grid(sus["ta_rem"], "t", d_idx=DATE_INDICES), unsafe_allow_html=True)
-                st.markdown("**🎯 Montaj Planı (Talep)**")
-                st.markdown(make_grid(sus["assembly"], d_idx=DATE_INDICES), unsafe_allow_html=True)
 
             with tt2:
                 st.markdown(f"**{ta_res['message']}**")
@@ -1654,6 +2069,162 @@ with tab_panel:
                     if st.button("Tamam", key="ta_ok_btn"):
                         st.session_state.ta_opt_res = None
                         st.rerun()
+
+
+# =============  TAB 2: MONTAJ PLANI  (YENİ — talep karşılama analizi)  =====
+with tab_montaj:
+    st.markdown("""<div style="display:flex;align-items:center;gap:12px;margin-bottom:12px;">
+        <span style="font-size:2rem;">🎯</span>
+        <div><h2 style="margin:0;font-size:1.3rem;">Montaj Planı — Talep Karşılama Analizi</h2>
+        <p style="color:#93c5fd;margin:0;font-size:0.8rem;">TA çıkışı montaj talebini karşılayabiliyor mu? Açıklar nereden geliyor?</p></div>
+    </div>""", unsafe_allow_html=True)
+
+    # ── Kapsama Hesabı ──
+    total_demand = sum(sum(v) for v in sus["assembly"].values())
+    total_ta_out = sum(sum(v) for v in sus["ta_daily"].values())
+    kst_neg_cells = sum(1 for c in SUS_CARDS for v in sus["ta_rem"].get(c,[]) if v < 0)
+    kst_total_cells = len(SUS_CARDS) * N_DAYS
+    coverage_pct = 100.0 * (1 - kst_neg_cells / max(1, kst_total_cells))
+
+    # Karşılanamayan toplam talep miktarı (KST'nin negatif tepe değerleri)
+    uncovered = 0
+    for c in SUS_CARDS:
+        rem = sus["ta_rem"].get(c, [])
+        if rem and min(rem) < 0:
+            uncovered += abs(min(rem))
+
+    # ── KPI Satırı ──
+    kc1, kc2, kc3, kc4, kc5 = st.columns(5)
+    with kc1: st.metric("Toplam Talep", f"{total_demand:,}")
+    with kc2: st.metric("Toplam TA Üretim", f"{total_ta_out:,}")
+    with kc3: st.metric("KST Açık Hücreleri", f"{kst_neg_cells}/{kst_total_cells}")
+    with kc4: st.metric("Talep Kapsama", f"%{coverage_pct:.1f}")
+    with kc5:
+        if kst_neg_cells == 0:
+            st.metric("Durum", "KARŞILANIYOR ✅")
+        else:
+            st.metric("Karşılanamayan", f"-{uncovered:,}", delta_color="inverse")
+    st.write("---")
+
+    m_ozet, m_detay, m_oncesonra = st.tabs(["📊 Özet", "🔍 Detay", "🆚 Önce/Sonra"])
+
+    # ─── ÖZET ───
+    with m_ozet:
+        st.markdown("#### 🎯 Montaj Talebi (kart × gün)")
+        st.markdown(make_grid(sus["assembly"], d_idx=DATE_INDICES), unsafe_allow_html=True)
+
+        st.markdown("#### 📦 KST — Talep Karşılama Stoğu")
+        st.caption("🔴 Negatif = o gün talep karşılanamıyor (TA çıkışı + başlangıç stoğu < birikimli talep)")
+        st.markdown(make_grid(sus["ta_rem"], "t", d_idx=DATE_INDICES), unsafe_allow_html=True)
+
+        # Kart-bazlı kapsama özet kartları
+        st.markdown("#### 📋 Kart Bazlı Kapsama Özeti")
+        rows = []
+        for c in SUS_CARDS:
+            dem = sum(sus["assembly"].get(c, []))
+            prod = sum(sus["ta_daily"].get(c, []))
+            rem = sus["ta_rem"].get(c, [])
+            min_kst = min(rem) if rem else 0
+            neg_days = sum(1 for v in rem if v < 0)
+            durum = "✅ Tam" if neg_days == 0 else f"❌ {neg_days} gün açık"
+            rows.append({"Kart": c, "Toplam Talep": dem, "Toplam TA Üretim": prod,
+                         "Min KST": min_kst, "Açık Gün Sayısı": neg_days, "Durum": durum})
+        coverage_df = pd.DataFrame(rows).sort_values("Açık Gün Sayısı", ascending=False)
+        st.dataframe(coverage_df, use_container_width=True, hide_index=True)
+
+    # ─── DETAY ───
+    with m_detay:
+        st.markdown("#### 🔍 Günlük Talep vs Karşılama")
+        sel_card = st.selectbox("Kart seçin:", SUS_CARDS, key="montaj_detay_card")
+
+        dem  = sus["assembly"].get(sel_card, [0]*N_DAYS)
+        ta   = sus["ta_daily"].get(sel_card, [0]*N_DAYS)
+        kst  = sus["ta_rem"].get(sel_card, [0]*N_DAYS)
+        kso  = sus["otd_rem"].get(sel_card, [0]*N_DAYS)
+        ksm  = sus["md_rem"].get(sel_card, [0]*N_DAYS) if PROCESS_MAP.get(sel_card) else [None]*N_DAYS
+
+        fig = go.Figure()
+        fig.add_trace(go.Bar(x=SUS_DATES, y=dem, name="Talep", marker_color="#3b82f6"))
+        fig.add_trace(go.Bar(x=SUS_DATES, y=ta, name="TA Üretim", marker_color="#22c55e"))
+        fig.add_trace(go.Scatter(x=SUS_DATES, y=kst, name="KST", mode="lines+markers", line=dict(color="#fbbf24", width=2)))
+        fig.add_hline(y=0, line_dash="dash", line_color="red")
+        fig.update_layout(template="plotly_dark", height=340, barmode="group",
+                          margin=dict(l=30,r=10,t=30,b=30), paper_bgcolor="rgba(0,0,0,0)",
+                          plot_bgcolor="rgba(255,255,255,0.03)",
+                          title=f"{sel_card} — Günlük Talep, TA Üretim ve KST")
+        st.plotly_chart(fig, use_container_width=True)
+
+        # Açık zinciri: KST eksiyse, KSM veya KSO de mi eksi?
+        st.markdown("#### 🔗 Açık Zinciri Analizi")
+        st.caption("Bir günde KST negatifse, açığın hangi aşamadan kaynaklandığını gösterir.")
+        chain_rows = []
+        for i in range(N_DAYS):
+            if kst[i] < 0:
+                kso_status = "❌ Açık" if kso[i] < 0 else "✅ OK"
+                if PROCESS_MAP.get(sel_card):
+                    ksm_status = "❌ Açık" if ksm[i] < 0 else "✅ OK"
+                else:
+                    ksm_status = "— (MD yok)"
+                # Kök neden
+                if kso[i] < 0:
+                    kok = "OTD yetersiz"
+                elif PROCESS_MAP.get(sel_card) and ksm[i] < 0:
+                    kok = "MD yetersiz"
+                else:
+                    kok = "TA yetersiz"
+                chain_rows.append({
+                    "Gün": i+1, "Tarih": SUS_DATES[i], "Talep": dem[i], "TA Üretim": ta[i],
+                    "KST": kst[i], "KSO": kso[i], "KSM": ksm[i] if ksm[i] is not None else "—",
+                    "OTD Durum": kso_status, "MD Durum": ksm_status, "Kök Neden": kok
+                })
+        if chain_rows:
+            st.dataframe(pd.DataFrame(chain_rows), use_container_width=True, hide_index=True)
+        else:
+            st.success(f"✅ {sel_card} için açık yok — talep tüm günlerde karşılanıyor.")
+
+    # ─── ÖNCE/SONRA ───
+    with m_oncesonra:
+        st.markdown("#### 🆚 Optimize Öncesi/Sonrası Karşılama")
+        any_opt = any([st.session_state.otd_opt_res, st.session_state.md_opt_res, st.session_state.ta_opt_res])
+        if not any_opt:
+            st.info("Optimize sonucu henüz yok. OTD/MD/TA aşamalarından birini optimize edin, sonra burada karşılaştırın.")
+        else:
+            # En son optimize edilmiş planı al
+            ref_plan = sus
+            opt_plan = None
+            if st.session_state.ta_opt_res:  opt_plan = st.session_state.ta_opt_res["new_plan"]
+            elif st.session_state.md_opt_res: opt_plan = st.session_state.md_opt_res["new_plan"]
+            elif st.session_state.otd_opt_res: opt_plan = st.session_state.otd_opt_res["new_plan"]
+
+            if opt_plan:
+                old_neg = sum(1 for c in SUS_CARDS for v in ref_plan["ta_rem"].get(c,[]) if v<0)
+                new_neg = sum(1 for c in SUS_CARDS for v in opt_plan["ta_rem"].get(c,[]) if v<0)
+                old_cov = 100.0 * (1 - old_neg/max(1,kst_total_cells))
+                new_cov = 100.0 * (1 - new_neg/max(1,kst_total_cells))
+
+                cc1, cc2, cc3 = st.columns(3)
+                with cc1: st.metric("Açık (Önce)", f"{old_neg} hücre")
+                with cc2: st.metric("Açık (Sonra)", f"{new_neg} hücre", delta=f"{new_neg-old_neg:+d}", delta_color="inverse")
+                with cc3: st.metric("Kapsama Değişimi", f"%{new_cov:.1f}", delta=f"{new_cov-old_cov:+.1f}")
+
+                cmp_card = st.selectbox("Karşılaştırılacak kart:", SUS_CARDS, key="montaj_cmp_card")
+                bc1, bc2 = st.columns(2)
+                with bc1:
+                    st.markdown("**KST — Önce**")
+                    old_vals = ref_plan["ta_rem"].get(cmp_card, [0]*N_DAYS)
+                    fig1 = go.Figure()
+                    fig1.add_trace(go.Bar(x=SUS_DATES, y=old_vals, marker_color=["#ef4444" if v<0 else "#3b82f6" for v in old_vals]))
+                    fig1.add_hline(y=0, line_dash="dash", line_color="red")
+                    fig1.update_layout(template="plotly_dark", height=280, margin=dict(l=30,r=10,t=10,b=30), paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(255,255,255,0.03)")
+                    st.plotly_chart(fig1, use_container_width=True)
+                with bc2:
+                    st.markdown("**KST — Sonra**")
+                    new_vals = opt_plan["ta_rem"].get(cmp_card, [0]*N_DAYS)
+                    fig2 = go.Figure()
+                    fig2.add_trace(go.Bar(x=SUS_DATES, y=new_vals, marker_color=["#ef4444" if v<0 else "#22c55e" for v in new_vals]))
+                    fig2.add_hline(y=0, line_dash="dash", line_color="red")
+                    fig2.update_layout(template="plotly_dark", height=280, margin=dict(l=30,r=10,t=10,b=30), paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(255,255,255,0.03)")
+                    st.plotly_chart(fig2, use_container_width=True)
 
 
 # =============  TAB 2: OPTİMİZASYON  (orijinal, değişmedi)  ==========
