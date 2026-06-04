@@ -380,15 +380,21 @@ sus = st.session_state.sus
 #   Phase 1: min Σ z[l,t]  (setup tetiklenmesi sayısı)
 #   Phase 2: min Σ KSO[k,t] (toplam tampon stok)   s.t.  Σz ≤ z*
 # Kısıt sonsuz olursa (talep karşılanamıyor) → ihlal sayısı raporlanır.
-def solve_otd_milp(plan, time_limit=60, mip_gap=0.01, allow_two_cards_per_day=True,
+def solve_otd_milp(plan, time_limit=60, mip_gap=0.01, allow_two_cards_per_day=False,
                    minimize_setup_first=True):
     """OTD aşaması için PuLP+CBC tabanlı MILP çözücü.
+
+    ÜRETİM KURALI (kritik): Bir hatta bir kart atandığında o kart o gün
+    TAM tempo (Cap × rate) üretir — yarım/kırık üretim YOK. İşçi boş kalmaz.
+    Tek istisna: kart değişimi (setup) günü kapasitenin %50'si setup'a gider,
+    o gün o kart Cap × rate × 0.5 üretir (kalan zaman boşa değil, setup'a).
+    Yani üretim her zaman Cap×rate'in {0, 0.5, 1} katıdır.
 
     Args:
         plan: mevcut SUS planı (dict)
         time_limit: çözücü süre sınırı (saniye)
         mip_gap: kabul edilebilir MIP açıklık oranı
-        allow_two_cards_per_day: True ise gün-içi 2 kart (slot1+slot2) açık
+        allow_two_cards_per_day: True ise gün-içi 2 kart (slot paylaşımı, setup ile)
         minimize_setup_first: True → lexicographic (setup önce, stok sonra)
 
     Returns:
@@ -402,101 +408,83 @@ def solve_otd_milp(plan, time_limit=60, mip_gap=0.01, allow_two_cards_per_day=Tr
     L = OTD_LINES
     T = list(range(nd))
 
-    # Uygunluk: Cap[k,l] = TEMPO[l].get(k, 0) > 0 ise uygun
     Cap = {(k, l): float(TEMPO[l].get(k, 0)) for k in K for l in L}
     eligible = {(k, l): 1 if Cap[(k, l)] > 0 else 0 for k in K for l in L}
 
-    # Rate: hat × gün
     rate_dict = plan.get("otd_rates", {})
     R = {(l, t): float(rate_dict.get(l, [1.0]*nd)[t]) if t < len(rate_dict.get(l, [])) else 1.0
          for l in L for t in T}
 
-    # Downstream tüketim: kart MD'ye giriyorsa md_daily; aksi halde ta_daily
-    # (OTD stoğunu MD veya TA tüketir.)
     md_daily = plan.get("md_daily", {})
     ta_daily = plan.get("ta_daily", {})
     D_down = {}
     for k in K:
-        if PROCESS_MAP.get(k):
-            arr = md_daily.get(k, [0]*nd)
-        else:
-            arr = ta_daily.get(k, [0]*nd)
+        arr = md_daily.get(k, [0]*nd) if PROCESS_MAP.get(k) else ta_daily.get(k, [0]*nd)
         for t in T:
             D_down[(k, t)] = float(arr[t]) if t < len(arr) else 0.0
 
-    # Başlangıç stoğu
     S0 = {k: float(plan["init"].get(k, {}).get("o", 0)) for k in K}
+    S_LOSS = 0.5
 
-    # Setup parametresi
-    S_LOSS = 0.5  # kapasitenin yarısı
-
-    # ═══ Model kur ═══
     m = _pulp.LpProblem("OTD_CLSP_SI", _pulp.LpMinimize)
 
-    # Karar değişkenleri
-    f = {(k, l, t): _pulp.LpVariable(f"f_{k}_{l}_{t}", lowBound=0, upBound=1)
-         for k in K for l in L for t in T if eligible[(k, l)]}
+    # ─── Karar değişkenleri ───
+    # a[k,l,t]: kart k, hat l, gün t'de atandı mı (binary)
     a = {(k, l, t): _pulp.LpVariable(f"a_{k}_{l}_{t}", cat="Binary")
          for k in K for l in L for t in T if eligible[(k, l)]}
-    s_var = {(l, t): _pulp.LpVariable(f"s_{l}_{t}", lowBound=0, upBound=0.5)
-             for l in L for t in T}
-    z = {(l, t): _pulp.LpVariable(f"z_{l}_{t}", cat="Binary")
-         for l in L for t in T}
+    # u[l,t]: hat l, gün t aktif mi (vardiya var mı). u=0 → hat o gün boş.
+    u = {(l, t): _pulp.LpVariable(f"u_{l}_{t}", cat="Binary") for l in L for t in T}
+    # z[l,t]: gün-arası kart değişimi (setup tetikleyici)
+    z = {(l, t): _pulp.LpVariable(f"z_{l}_{t}", cat="Binary") for l in L for t in T}
+    # w[k,l,t]: kart k, hat l, gün t'de setup nedeniyle YARIM üretim (a AND z)
+    w = {(k, l, t): _pulp.LpVariable(f"w_{k}_{l}_{t}", cat="Binary")
+         for k in K for l in L for t in T if eligible[(k, l)]}
+    # x[k,l,t]: üretim miktarı (continuous ama net: Cap×R×{0,0.5,1})
     x = {(k, l, t): _pulp.LpVariable(f"x_{k}_{l}_{t}", lowBound=0)
          for k in K for l in L for t in T if eligible[(k, l)]}
-    KSO = {(k, t): _pulp.LpVariable(f"KSO_{k}_{t}", lowBound=0)
-           for k in K for t in T}
+    KSO = {(k, t): _pulp.LpVariable(f"KSO_{k}_{t}", lowBound=0) for k in K for t in T}
+
+    max_cards = 2 if allow_two_cards_per_day else 1
 
     # ─── Kısıtlar ───
 
-    # (1) Aktivite-zaman bağı: f ≤ a
-    for (k, l, t), v in f.items():
-        m += v <= a[(k, l, t)], f"act_{k}_{l}_{t}"
-
-    # (2) Gün doluluk: Σf + s = 1 (her hat-gün)
+    # (1) Aktif hatta tam max_cards kadar kart; u=0 → hiç kart
     for l in L:
         for t in T:
-            m += _pulp.lpSum(f[(k, l, t)] for k in K if (k, l, t) in f) + s_var[(l, t)] == 1, \
-                 f"fill_{l}_{t}"
+            ksum = _pulp.lpSum(a[(k, l, t)] for k in K if (k, l, t) in a)
+            if max_cards == 1:
+                m += ksum == u[(l, t)], f"oneCard_{l}_{t}"           # aktif hat = tam 1 kart
+            else:
+                m += ksum >= u[(l, t)], f"minCard_{l}_{t}"
+                m += ksum <= max_cards * u[(l, t)], f"maxCard_{l}_{t}"
 
-    # (3) Max kart/gün (slot kavramı)
-    max_cards = 2 if allow_two_cards_per_day else 1
-    for l in L:
-        for t in T:
-            m += _pulp.lpSum(a[(k, l, t)] for k in K if (k, l, t) in a) <= max_cards, \
-                 f"maxk_{l}_{t}"
-
-    # (4) Gün-içi setup: 2 kart varsa s ≥ 0.5
-    if allow_two_cards_per_day:
-        for l in L:
-            for t in T:
-                m += s_var[(l, t)] >= S_LOSS * (
-                    _pulp.lpSum(a[(k, l, t)] for k in K if (k, l, t) in a) - 1
-                ), f"intra_setup_{l}_{t}"
-
-    # (5) Gün-arası kart değişimi → z = 1 (her kart için a[t-1] vs a[t])
+    # (2) Gün-arası setup: aktif→aktif geçişte kart değiştiyse z=1
+    #     (Hat ilk açılışı a[t-1]=0→a[t]=1 de setup sayılır — yeni kurulum.)
     for l in L:
         for t in T:
             if t == 0: continue
             for k in K:
                 if (k, l, t) not in a or (k, l, t-1) not in a: continue
-                m += a[(k, l, t-1)] - a[(k, l, t)] <= z[(l, t)], f"drop_{k}_{l}_{t}"
                 m += a[(k, l, t)] - a[(k, l, t-1)] <= z[(l, t)], f"add_{k}_{l}_{t}"
+                m += a[(k, l, t-1)] - a[(k, l, t)] <= z[(l, t)], f"drop_{k}_{l}_{t}"
 
-    # (6) Setup carryover: z=1 ise s[t] + s[t-1] ≥ 0.5
-    for l in L:
-        for t in T:
-            if t == 0:
-                m += s_var[(l, t)] >= S_LOSS * z[(l, t)], f"carry0_{l}_{t}"
-            else:
-                m += s_var[(l, t)] + s_var[(l, t-1)] >= S_LOSS * z[(l, t)], \
-                     f"carry_{l}_{t}"
+    # (3) w = a AND z (linearization) — sadece setup günü o kart yarım üretir
+    for (k, l, t) in a:
+        if t == 0:
+            # İlk gün setup yok (referans yok) → w=0
+            m += w[(k, l, t)] == 0, f"w0_{k}_{l}_{t}"
+        else:
+            m += w[(k, l, t)] <= a[(k, l, t)], f"wa_{k}_{l}_{t}"
+            m += w[(k, l, t)] <= z[(l, t)], f"wz_{k}_{l}_{t}"
+            m += w[(k, l, t)] >= a[(k, l, t)] + z[(l, t)] - 1, f"wand_{k}_{l}_{t}"
 
-    # (7) Üretim: x = Cap × R × f
+    # (4) Üretim: TAM üretim, setup günü yarım
+    #     x = Cap × R × (a − 0.5·w)  →  setup yok: a=1,w=0 → tam | setup: a=1,w=1 → yarım | boş: a=0 → 0
     for (k, l, t), v in x.items():
-        m += v == Cap[(k, l)] * R[(l, t)] * f[(k, l, t)], f"prod_{k}_{l}_{t}"
+        m += v == Cap[(k, l)] * R[(l, t)] * (a[(k, l, t)] - S_LOSS * w[(k, l, t)]), \
+             f"prod_{k}_{l}_{t}"
 
-    # (8) Stok dengesi: KSO[t] = (KSO[t-1] veya S0) + Σx - D_down
+    # (5) Stok dengesi + fizibilite (KSO ≥ 0 zaten lowBound)
     for k in K:
         for t in T:
             prev = KSO[(k, t-1)] if t > 0 else S0[k]
@@ -504,65 +492,60 @@ def solve_otd_milp(plan, time_limit=60, mip_gap=0.01, allow_two_cards_per_day=Tr
                 x[(k, l, t)] for l in L if (k, l, t) in x
             ) - D_down[(k, t)], f"bal_{k}_{t}"
 
-    # ─── Phase 1: minimize setup ───
+    # ─── Amaç: lexicographic ───
     setup_obj = _pulp.lpSum(z[(l, t)] for l in L for t in T)
+    buffer_obj = _pulp.lpSum(KSO[(k, t)] for k in K for t in T)
+    solver = _pulp.PULP_CBC_CMD(timeLimit=time_limit, gapRel=mip_gap, msg=0)
+
     if minimize_setup_first:
         m += setup_obj
-        solver = _pulp.PULP_CBC_CMD(timeLimit=time_limit, gapRel=mip_gap, msg=0)
         m.solve(solver)
-        status_p1 = _pulp.LpStatus[m.status]
         if m.status not in (_pulp.LpStatusOptimal, _pulp.LpStatusNotSolved):
             return {"status": "INFEASIBLE", "new_plan": plan,
-                    "message": f"Phase 1 fizibil değil: {status_p1}"}
+                    "message": f"Phase 1 fizibil değil: {_pulp.LpStatus[m.status]}"}
         z_star = sum(z[(l, t)].value() or 0 for l in L for t in T)
-
-        # ─── Phase 2: minimize buffer, setup ≤ z* ───
         m += setup_obj <= z_star + 0.5, "phase1_lock"
-        m.objective = _pulp.lpSum(KSO[(k, t)] for k in K for t in T)
+        m.objective = buffer_obj
         m.solve(solver)
     else:
-        # Tek aşama: ağırlıklı toplam (setup pahalı → büyük katsayı)
-        m += 100000 * setup_obj + _pulp.lpSum(KSO[(k, t)] for k in K for t in T)
-        solver = _pulp.PULP_CBC_CMD(timeLimit=time_limit, gapRel=mip_gap, msg=0)
+        m += 100000 * setup_obj + buffer_obj
         m.solve(solver)
 
     status = _pulp.LpStatus[m.status]
-    if m.status not in (_pulp.LpStatusOptimal,):
+    if m.status != _pulp.LpStatusOptimal:
         return {"status": status, "new_plan": plan,
                 "message": f"MILP fizibil değil veya zaman aşımı: {status}"}
 
     # ═══ Sonuçları plana yansıt ═══
     new_plan = copy.deepcopy(plan)
-    # alloc + alloc2 + split sıfırla
     new_plan["otd_alloc"] = {l: [""]*nd for l in L}
     new_plan["otd_alloc2"] = {l: [""]*nd for l in L}
     new_plan["otd_split"] = {l: [(1.0, 0.0)]*nd for l in L}
 
+    setup_intra = 0  # gün-içi setup (2-kart) sayısı
     for l in L:
         for t in T:
-            # Aktif kartları sırala (f değeri büyük olan slot1)
-            active = [(k, f[(k, l, t)].value() or 0.0)
-                      for k in K if (k, l, t) in f and (a[(k, l, t)].value() or 0) > 0.5]
-            active.sort(key=lambda x: -x[1])
+            active = [(k, (a[(k, l, t)].value() or 0), (w[(k, l, t)].value() or 0))
+                      for k in K if (k, l, t) in a and (a[(k, l, t)].value() or 0) > 0.5]
             if not active:
                 continue
             if len(active) == 1:
-                new_plan["otd_alloc"][l][t] = active[0][0]
-                new_plan["otd_split"][l][t] = (1.0, 0.0)
+                k1, _, w1 = active[0]
+                new_plan["otd_alloc"][l][t] = k1
+                # setup günü ise üretim yarım → split f1 = 0.5, değilse 1.0
+                f1 = (1.0 - S_LOSS * w1)
+                new_plan["otd_split"][l][t] = (round(f1, 4), 0.0)
             else:
-                # İlk 2'yi slot1/slot2'ye yerleştir
-                k1, f1v = active[0]
-                k2, f2v = active[1]
+                # 2-kart günü (sadece allow_two_cards açıkken)
+                setup_intra += 1
+                k1, _, w1 = active[0]
+                k2, _, w2 = active[1]
                 new_plan["otd_alloc"][l][t] = k1
                 new_plan["otd_alloc2"][l][t] = k2
-                # Toplam zaman: f1 + f2 + s = 1; f1/f2 oranını koru
-                total = f1v + f2v
-                if total > 1e-6:
-                    f1n = f1v / 1.0  # normalize değil — gerçek f değerlerini kullan
-                    f2n = f2v / 1.0
-                    new_plan["otd_split"][l][t] = (round(f1n, 4), round(f2n, 4))
+                # gün-içi setup: ikisi de yarımdan az, toplam = 1 - 0.5(setup)
+                avail = max(0.0, 1.0 - S_LOSS)
+                new_plan["otd_split"][l][t] = (round(avail/2, 4), round(avail/2, 4))
 
-    # otd_daily'yi türetilen alloc'tan hesapla (deterministik)
     new_plan["otd_daily"] = alloc_to_daily(
         new_plan["otd_alloc"], TEMPO, OTD_LINES,
         new_plan.get("otd_rates", {}),
@@ -573,12 +556,18 @@ def solve_otd_milp(plan, time_limit=60, mip_gap=0.01, allow_two_cards_per_day=Tr
 
     setup_count = int(round(sum(z[(l, t)].value() or 0 for l in L for t in T)))
     total_buffer = sum(KSO[(k, t)].value() or 0 for k in K for t in T)
+    remaining = sum(1 for k in K for v in new_plan["otd_rem"].get(k, []) if v < 0)
     return {
         "status": status, "new_plan": new_plan,
         "setup_count": setup_count,
+        "setup_intra": setup_intra,
         "total_buffer": int(round(total_buffer)),
+        "remaining": remaining,
         "solve_time": round(m.solutionTime, 2) if hasattr(m, 'solutionTime') else None,
-        "message": f"✅ MILP çözüldü — {setup_count} setup, {int(round(total_buffer)):,} toplam tampon"
+        "message": (f"✅ MILP çözüldü — {setup_count} gün-arası setup"
+                    + (f" + {setup_intra} gün-içi setup" if setup_intra else "")
+                    + f", {int(round(total_buffer)):,} toplam tampon"
+                    + (f" | ⚠️ {remaining} hücre hâlâ açık" if remaining else ""))
     }
 
 
@@ -627,9 +616,9 @@ def solve_md_milp(plan, time_limit=30, mip_gap=0.02):
          if eligible[(k, l)]}
     KSM = {(k, t): _pulp.LpVariable(f"KSM_{k}_{t}", lowBound=0) for k in K_md for t in T}
 
-    # x ≤ Cap × rate × a
+    # x = Cap × rate × a  (TAM üretim — bir kanala kart atanırsa tam tempo, MD'de setup yok)
     for (k, l, r, t), v in x.items():
-        m += v <= Cap[(k, l)] * get_rate(l, r, t) * a[(k, l, r, t)], f"cap_{k}_{l}_{r}_{t}"
+        m += v == Cap[(k, l)] * get_rate(l, r, t) * a[(k, l, r, t)], f"cap_{k}_{l}_{r}_{t}"
 
     # Bir kanal-satırda en fazla 1 kart/gün
     for l in L_md:
@@ -3779,8 +3768,9 @@ with tab_opt:
             with cmC:
                 _milp_gap = st.slider("MIP açıklık (%):", 0.5, 10.0, 2.0, step=0.5, key="milp_gap") / 100.0
             with cmD:
-                _milp_two = st.toggle("OTD gün-içi 2 kart", value=True, key="milp_two_cards",
-                                      help="Kapalı = klasik CLSP (gün başına 1 kart). Açık = gün-içi setup ile 2 kart.")
+                _milp_two = st.toggle("OTD gün-içi 2 kart", value=False, key="milp_two_cards",
+                                      help="KAPALI (önerilen) = her hatta günde tek kart, TAM tempo üretim. "
+                                           "AÇIK = gün-içi 2 kart (setup ile, yarım üretim) — sadece zorunlu hallerde.")
 
             if st.button("🧮 MILP Çöz", type="primary", use_container_width=True, key="btn_milp_solve"):
                 with st.spinner(f"{_milp_stage} MILP çözülüyor… (CBC, max {_milp_tlim} sn)"):
