@@ -54,41 +54,75 @@ AUTHORIZED_SICIL = "26127996"
 @st.cache_data
 def load_production_data() -> dict:
     """
-    Üretim verilerini optimizer.py'ın beklediği formata yükler.
-
-    ───────────────────────────────────────────────────────────────
-    BU FONKSİYON İÇİNE MEVCUT dashboard.py'DAKİ GÖMÜLÜDÜRİLMİŞ
-    VERİLERİ (tempo_otd, tempo_md, ta_cap, demand, init_kso, vb.)
-    AYNEN KOPYALAYIN. Aşağıdaki örnek yapı referans içindir.
-    ───────────────────────────────────────────────────────────────
+    Sasi_Uretim_Plani_v4_1.xlsx'ten türetilmiş gömülü üretim verileri.
+    optimizer.py (OR-Tools SCIP) tarafından doğrudan kullanılır.
     """
 
     # ── OTD Tempoları: (kart, hat) → günlük kapasite ────────────────
-    # Gerçek veriler dashboard.py'daki TEMPO dict'inden gelecek.
-    tempo_otd = {}
-    # Örnek: tempo_otd[("XC", "OD0")] = 1200
-    # ... tüm (kart, hat) kombinasyonları ...
+    _tempo_otd_raw = {
+        ("F4","OD0"):100, ("GX","OD0"):800, ("V1","OD0"):1000, ("XGB","OD0"):927, ("XGS","OD0"):1040, ("Y3","OD0"):880, ("Y4","OD0"):850,
+        ("F4","OD2"):200, ("GX","OD2"):700, ("LG","OD2"):450, ("V1","OD2"):1150, ("XC","OD2"):1140, ("XD","OD2"):770, ("XGB","OD2"):880, ("XGS","OD2"):1000, ("XR","OD2"):610, ("Y3","OD2"):920, ("Y4","OD2"):850,
+        ("V1","OD3"):1150, ("XC","OD3"):1140, ("XD","OD3"):770, ("XGB","OD3"):880, ("XGS","OD3"):1000, ("XR","OD3"):610, ("Y3","OD3"):920, ("Y4","OD3"):850,
+        ("F4","OD4"):500, ("LG","OD4"):550, ("XGB","OD4"):700, ("XGS","OD4"):750,
+        ("F4","OD5"):300, ("GB","OD5"):500, ("GL","OD5"):540, ("MR","OD5"):450, ("V1","OD5"):700,
+        ("F4","OD6"):400, ("GB","OD6"):700, ("GL","OD6"):750, ("Y3","OD6"):870, ("Y4","OD6"):750,
+    }
+    # Sıfır tempo = hat-kart kombinasyonu mümkün değil → filtrele
+    tempo_otd = {k: float(v) for k, v in _tempo_otd_raw.items() if v > 0}
 
-    # ── MD Tempoları: (kart, hat) → günlük kapasite ─────────────────
-    tempo_md = {}
-    # Örnek: tempo_md[("GB", "MD1")] = 800
-    # ... sadece KARTLAR_MD × MD_LINES ...
+    # ── MD Tempoları ─────────────────────────────────────────────────
+    # F4: MD temposu 0 → MD'den fiilen geçmiyor (skip gibi davranır)
+    _tempo_md_raw = {
+        ("GB","MD1"):800, ("GL","MD1"):780, ("MR","MD1"):600, ("V1","MD1"):1000,
+        ("XGB","MD1"):950, ("XGS","MD1"):1100, ("Y3","MD1"):890, ("Y4","MD1"):1000,
+        ("GB","MD2"):800, ("GL","MD2"):780, ("MR","MD2"):600, ("V1","MD2"):1000,
+        ("XGB","MD2"):950, ("XGS","MD2"):1100, ("Y3","MD2"):890, ("Y4","MD2"):1000,
+    }
+    tempo_md = {k: float(v) for k, v in _tempo_md_raw.items() if v > 0}
 
-    # ── TA Kapasitesi: (kart, gün) → günlük max üretim ──────────────
-    ta_cap = {}
-    # Örnek: ta_cap[("XC", 0)] = 900
-    # Fikstur sayısı × çevrim başı adet = günlük kapasite
-    # ... tüm (kart, gün) ...
+    # ── TA Fikstur Kapasitesi: 2 × fikstur_sayısı × çevrim_başı_adet
+    ta_max = {
+        "F4":160, "GB":180, "GL":630, "GX":1040, "LG":1040,
+        "MR":100, "V1":760, "XC":1160, "XD":600, "XGB":828,
+        "XGS":1680, "XR":460, "Y3":640, "Y4":628,
+    }
+    ta_cap = {(k, t): float(v) for k, v in ta_max.items() for t in range(T)}
 
-    # ── Montaj Talebi: (kart, gün) → adet ───────────────────────────
-    demand = {}
-    # Örnek: demand[("XC", 0)] = 450
-    # ... tüm (kart, gün) ...
+    # ── Montaj Talebi (SUS D–Q sütunları, 14 iş günü) ───────────────
+    _raw = {
+        "F4":[0,0,0,0,0,0,0,0,0,0,0,0,0,0],
+        "GB":[0,0,0,0,0,665,0,0,0,0,0,0,0,0],
+        "GL":[0,0,0,0,0,0,0,0,0,0,0,0,0,0],
+        "GX":[0,0,0,550,0,0,297,0,0,0,0,0,0,0],
+        "LG":[279,250,50,551,950,1501,1250,1148,1143,1001,201,25,0,26],
+        "MR":[0,0,0,0,0,0,0,353,51,0,0,0,0,0],
+        "V1":[258,0,0,0,0,0,0,0,0,0,0,0,0,0],
+        "XC":[618,1400,1340,750,430,0,0,0,0,0,198,0,499,487],
+        "XD":[625,102,0,4,0,0,0,0,0,0,0,735,374,225],
+        "XGB":[205,1265,1086,600,0,0,1,0,0,0,0,840,343,280],
+        "XGS":[1681,1250,999,300,0,461,946,1058,1200,2785,2584,1271,1213,843],
+        "XR":[2,0,215,0,945,473,467,608,500,0,239,408,261,501],
+        "Y3":[0,0,0,0,0,0,0,0,0,0,0,0,0,107],
+        "Y4":[881,0,0,1100,900,508,0,0,0,0,0,0,0,0],
+    }
+    demand = {(k, t): float(v) for k, arr in _raw.items()
+              for t, v in enumerate(arr)}
 
     # ── Başlangıç Stokları ───────────────────────────────────────────
-    init_kso = {k: 0 for k in KARTLAR}  # Gerçek değerler girilecek
-    init_ksm = {k: 0 for k in KARTLAR_MD}
-    init_kst = {k: 0 for k in KARTLAR}
+    init_kso = {
+        "F4":238, "GB":0, "GL":0, "GX":200, "LG":543, "MR":108,
+        "V1":400, "XC":1814, "XD":1069, "XGB":681, "XGS":2055,
+        "XR":380, "Y3":38, "Y4":1410,
+    }
+    init_ksm = {
+        "F4":28, "GB":1188, "GL":644, "MR":347, "V1":27,
+        "XGB":587, "XGS":123, "Y3":24, "Y4":554,
+    }
+    init_kst = {
+        "F4":349, "GB":575, "GL":416, "GX":667, "LG":700, "MR":308,
+        "V1":249, "XC":1784, "XD":850, "XGB":663, "XGS":2291,
+        "XR":510, "Y3":157, "Y4":782,
+    }
 
     return {
         "kartlar":      KARTLAR,
@@ -180,8 +214,8 @@ def main():
         if st.session_state.opt_result and st.session_state.approved:
             res = st.session_state.opt_result
             st.success(
-                f"✅ Onaylı Plan — Setup: {res['phase2_setups']} | "
-                f"Toplam Tampon: {res['phase2_total_buffer']:,}")
+                f"✅ Onaylı Plan — Setup: {res['total_setups']} | "
+                f"Toplam Tampon: {res['total_buffer']:,}")
 
             with st.expander("OTD Hat Alokasyonu", expanded=True):
                 st.dataframe(result_to_otd_df(res), use_container_width=True)
@@ -211,14 +245,14 @@ def main():
         st.header("🚀 MILP Optimizasyonu")
         st.markdown(
             "Leksikografik iki fazlı çözüm: "
-            "**Faz 1** setup sayısını minimize eder, "
-            "**Faz 2** tampon stoğu minimize eder (setup ≤ z*).")
+            "Ağırlıklı amaç fonksiyonu ile setup sayısı ve tampon stok "
+            "eş zamanlı minimize edilir (W_SETUP >> 1).")
 
         col1, col2 = st.columns(2)
         with col1:
             time_limit = st.slider(
-                "Çözücü Zaman Limiti (saniye/faz)",
-                min_value=10, max_value=600, value=120, step=10)
+                "Çözücü Zaman Limiti (saniye)",
+                min_value=10, max_value=600, value=60, step=10)
         with col2:
             st.metric("Çözücü", "SCIP (OR-Tools)")
             st.metric("Model Tipi", "MILP / CLSP-SI")
@@ -242,14 +276,11 @@ def main():
                         f"✅ Çözüm bulundu ({result['status']}) — "
                         f"{result['solve_time_sec']}s")
 
-                    m1, m2, m3, m4 = st.columns(4)
-                    m1.metric("Faz 1 Setup (z*)",
-                              result["phase1_setups"])
-                    m2.metric("Faz 2 Setup",
-                              result["phase2_setups"])
-                    m3.metric("Toplam Tampon",
-                              f"{result['phase2_total_buffer']:,}")
-                    m4.metric("Çözüm Süresi",
+                    m1, m2, m3 = st.columns(3)
+                    m1.metric("Toplam Setup", result["total_setups"])
+                    m2.metric("Toplam Tampon Stok",
+                              f"{result['total_buffer']:,}")
+                    m3.metric("Çözüm Süresi",
                               f"{result['solve_time_sec']}s")
 
                     st.subheader("Önerilen OTD Alokasyonu")
@@ -279,7 +310,7 @@ def main():
 
                 elif result["status"] == "INFEASIBLE":
                     st.error(
-                        f"❌ Fizibil çözüm bulunamadı (Faz {result.get('phase', '?')})")
+                        "❌ Fizibil çözüm bulunamadı.")
                     st.warning(result.get("message", ""))
                     st.info(
                         "Olası çözümler: TA fikstur kapasitesini artırın, "
