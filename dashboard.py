@@ -391,82 +391,234 @@ def recalc_stocks(plan):
     return p
 
 def run_optimization(current_plan):
+    """v4 Optimize: forward-looking, overstock-aware, slot2-capable, gap-aware setup.
+
+    Strateji:
+      - Her kart için tüm açık günler tespit edilir.
+      - Açıkları kapatmak için en erken eksik tetiklendiği güne kadar olan
+        TÜM hat-gün hücreleri taranır (sadece dar pencere değil).
+      - Sadece TEMPO uyumlu hatlar kullanılır.
+      - Slot1 boşsa Slot1, doluysa Slot2 önerilir (setup_loss düşülerek).
+      - Aşırı stok (overstock) tetikleyici eklemeler ENGELLENİR
+        (max(rem) ≤ threshold koşulu).
+      - Stok pozitif ama sıfıra yakın hedeflenir.
+    """
     plan = copy.deepcopy(current_plan)
-    nd = len(st.session_state.dyn_dates)
+    nd = N_DAYS
     proposals = []
-    violations = []
-    for stage, rem_key, stage_label in [("OTD","otd_rem","KSO"),("MD","md_rem","KSM"),("TA","ta_rem","KST")]:
-        for c in SUS_CARDS:
-            if stage == "MD" and not PROCESS_MAP.get(c): continue
-            rem = plan[rem_key].get(c, [0]*nd)
-            for i, v in enumerate(rem):
-                if v < 0:
-                    violations.append({"card":c,"stage":stage,"day":i,"deficit":abs(v),"rem_key":rem_key,"label":stage_label})
-    if not violations:
-        return {"status":"optimal","proposals":[],"message":"Plan zaten fizibil — tüm tampon stoklar pozitif!","new_plan":plan}
-    applied = copy.deepcopy(plan)
-    for v in sorted(violations, key=lambda x: (x["day"], -x["deficit"])):
-        c, stage, day, deficit = v["card"], v["stage"], v["day"], v["deficit"]
-        if stage == "OTD":
-            alloc = applied["otd_alloc"]
-            for d in range(max(0, day-2), day+1):
-                for line in OTD_LINES:
-                    line_alloc = alloc.get(line, [""]*nd)
-                    if d < len(line_alloc) and line_alloc[d] == "":
-                        cap = TEMPO.get(line, {}).get(c, 0)
+
+    def _overstock_threshold(c):
+        # Kartın ortalama günlük talebine göre dinamik üst sınır
+        asm = plan["assembly"].get(c, [0]*nd)
+        avg = sum(asm) / max(1, sum(1 for v in asm if v > 0))
+        return max(2.0 * avg, 800.0)
+
+    # ─── OTD: kart bazlı forward-looking yerleştirme ───
+    for c in SUS_CARDS:
+        compat_lines = [(l, TEMPO[l].get(c, 0)) for l in OTD_LINES if TEMPO[l].get(c, 0) > 0]
+        if not compat_lines: continue
+        compat_lines.sort(key=lambda x: -x[1])  # kapasiteye göre azalan
+
+        # İterasyon: her döngüde açıkları yeniden hesapla
+        safety_iter = 50
+        while safety_iter > 0:
+            safety_iter -= 1
+            rem = plan["otd_rem"].get(c, [0]*nd)
+            negs = [(i, -rem[i]) for i in range(nd) if rem[i] < 0]
+            if not negs: break
+            # En erken açık
+            d_def, deficit = min(negs, key=lambda x: x[0])
+            threshold = _overstock_threshold(c)
+
+            placed = False
+            # Boş slot için: 0 → d_def günleri tara
+            for d_try in range(0, d_def + 1):
+                if placed: break
+                for line, cap in compat_lines:
+                    s1 = plan["otd_alloc"].get(line, [""]*nd)
+                    s2 = plan.get("otd_alloc2", {}).get(line, [""]*nd)
+                    rate = plan.get("otd_rates", {}).get(line, [1.0]*nd)
+                    r = float(rate[d_try]) if d_try < len(rate) else 1.0
+
+                    # Slot1 boş mu?
+                    if d_try < len(s1) and s1[d_try] == "":
+                        # Setup hesabı: önceki non-empty
+                        prev = ""
+                        for k in range(d_try - 1, -1, -1):
+                            if k < len(s1) and s1[k]:
+                                prev = s1[k]; break
+                        gap = d_try - 1 - max(
+                            [k for k in range(d_try - 1, -1, -1) if k < len(s1) and s1[k]] + [-1])
+                        sl = 0.0
+                        if prev and prev != c and gap < 1:
+                            sl = setup_loss(prev, c)
+                        produce_frac = max(0.0, 1.0 - sl) * r
+                        add = int(cap * produce_frac)
+                        if add <= 0: continue
+
+                        # Overstock kontrolü: bu eklemeden sonra rem[d_try:] maksimum?
+                        new_max = max(rem[d_try:]) + add if rem[d_try:] else add
+                        if new_max > threshold and add > deficit * 1.5:
+                            # Yarım üretim yapılsın (sadece açığı karşılayacak kadar)
+                            add = min(add, max(deficit, 1))
+                            new_max = max(rem[d_try:]) + add if rem[d_try:] else add
+                            if new_max > threshold * 1.5:
+                                continue
+
+                        old_val = plan["otd_daily"][c][d_try] if d_try < len(plan["otd_daily"].get(c, [])) else 0
+                        s1[d_try] = c
+                        plan["otd_daily"][c][d_try] = old_val + add
+                        proposals.append({
+                            "type": "OTD üretim ekle", "card": c, "day": d_try + 1,
+                            "date": SUS_DATES[d_try] if d_try < len(SUS_DATES) else f"G{d_try+1}",
+                            "line": line, "slot": 1, "old": old_val, "new": old_val + add,
+                            "reason": f"{c} KSO Gün {d_def+1}'de −{deficit:,} açık",
+                            "impact": f"+{add:,} adet (Slot1)" + (f" [setup −%{int(sl*100)}]" if sl > 0 else "")
+                        })
+                        plan = recalc_stocks(plan)
+                        placed = True
+                        break
+
+                    # Slot1 dolu, c değil → Slot2 dene
+                    if d_try < len(s1) and s1[d_try] and s1[d_try] != c:
+                        if d_try < len(s2) and s2[d_try] == "":
+                            s1_card = s1[d_try]
+                            sl = setup_loss(s1_card, c)
+                            available = max(0.0, 1.0 - sl)
+                            # Slot2'ye eşit pay düşelim: f2 = available/2
+                            f2 = available / 2.0
+                            add = int(cap * f2 * r)
+                            if add <= 0: continue
+
+                            new_max = max(rem[d_try:]) + add if rem[d_try:] else add
+                            if new_max > threshold * 1.5:
+                                continue
+
+                            old_val = plan["otd_daily"][c][d_try] if d_try < len(plan["otd_daily"].get(c, [])) else 0
+                            s2[d_try] = c
+                            # Split güncelle
+                            sp = plan.setdefault("otd_split", {}).setdefault(line, [(1.0, 0.0)] * nd)
+                            sp[d_try] = (available / 2.0, available / 2.0)
+                            plan["otd_daily"][c][d_try] = old_val + add
+                            # Slot1 üretimi düşmüş olur (f1 azaldı) — hesabı yeniden yap:
+                            cap1 = TEMPO.get(line, {}).get(s1_card, 0)
+                            new_s1_prod = int(cap1 * (available / 2.0) * r)
+                            old_s1_total = plan["otd_daily"].get(s1_card, [0]*nd)[d_try]
+                            # Slot1'in eski katkısını çıkar (rate*cap1) → yenisini ekle
+                            # Bu hızlı yaklaşıkdır; recalc_stocks zaten sonra çağrılır.
+                            plan["otd_daily"][s1_card][d_try] = max(0, old_s1_total - int(cap1 * r) + new_s1_prod)
+                            proposals.append({
+                                "type": "OTD slot2 ekle", "card": c, "day": d_try + 1,
+                                "date": SUS_DATES[d_try] if d_try < len(SUS_DATES) else f"G{d_try+1}",
+                                "line": line, "slot": 2, "old": old_val, "new": old_val + add,
+                                "reason": f"{c} KSO Gün {d_def+1}'de −{deficit:,} açık ({s1_card} ile slot paylaşımı)",
+                                "impact": f"+{add:,} adet (Slot2) [setup −%{int(sl*100)}]"
+                            })
+                            plan = recalc_stocks(plan)
+                            placed = True
+                            break
+
+            if not placed:
+                # Bu kart için daha fazla yerleştirme imkanı yok
+                break
+
+    # ─── OVERSTOCK CLEANUP: aşırı stok yapan hücreleri boşalt ───
+    for c in SUS_CARDS:
+        compat_lines = [l for l in OTD_LINES if TEMPO[l].get(c, 0) > 0]
+        if not compat_lines: continue
+        threshold = _overstock_threshold(c)
+        # Her hattaki c kartı atamalarına bak; rem son güne kadar threshold'u
+        # büyük marjla aşıyorsa, en sondan başlayarak temizle
+        for line in compat_lines:
+            s1 = plan["otd_alloc"].get(line, [""]*nd)
+            for d in range(nd - 1, -1, -1):
+                rem = plan["otd_rem"].get(c, [0]*nd)
+                if d >= len(rem): continue
+                if rem[d] <= threshold * 1.5: continue
+                if d < len(s1) and s1[d] == c:
+                    # Kaldırılabilir mi? Test et: rem hala pozitif kalır mı?
+                    cap = TEMPO[line].get(c, 0)
+                    rate = plan.get("otd_rates", {}).get(line, [1.0]*nd)
+                    r = float(rate[d]) if d < len(rate) else 1.0
+                    remove_amt = int(cap * r)
+                    # Bu üretimi çıkarınca rem[d_check] < 0 olur mu?
+                    test_rem = [rem[i] - remove_amt for i in range(d, nd)]
+                    if all(v >= 0 for v in test_rem):
+                        old_val = plan["otd_daily"][c][d]
+                        s1[d] = ""
+                        plan["otd_daily"][c][d] = max(0, old_val - remove_amt)
+                        proposals.append({
+                            "type": "OTD üretim kes", "card": c, "day": d + 1,
+                            "date": SUS_DATES[d] if d < len(SUS_DATES) else f"G{d+1}",
+                            "line": line, "slot": 1, "old": old_val,
+                            "new": max(0, old_val - remove_amt),
+                            "reason": f"{c} aşırı stok (KSO={rem[d]:,} > {int(threshold):,})",
+                            "impact": f"−{remove_amt:,} adet (fazla üretim iptal)"
+                        })
+                        plan = recalc_stocks(plan)
+
+    # ─── MD aşaması — mevcut basit mantık (genişletilmedi bu turda) ───
+    rem_check = plan["md_rem"]
+    md_violations = []
+    for c in SUS_CARDS:
+        if not PROCESS_MAP.get(c): continue
+        for i, v in enumerate(rem_check.get(c, [])):
+            if v < 0: md_violations.append((c, i, abs(v)))
+    for c, day, deficit in sorted(md_violations, key=lambda x: x[1]):
+        for d in range(0, day + 1):
+            for line in ["MD1", "MD2"]:
+                rows = plan["md_alloc"].get(line, [])
+                for row in rows:
+                    if d < len(row) and row[d] == "":
+                        cap = MD_TEMPO.get(line, {}).get(c, 0)
                         if cap > 0:
-                            old_val = applied["otd_daily"][c][d] if d < len(applied["otd_daily"].get(c,[])) else 0
                             add = min(cap, deficit)
-                            proposals.append({"type":"OTD üretim ekle","card":c,"day":d+1,"date":SUS_DATES[d] if d<len(SUS_DATES) else f"G{d+1}","line":line,"old":old_val,"new":old_val+add,"reason":f"{c} KSO Gün {day+1}'de −{deficit:,} açık","impact":f"+{add:,} adet üretim"})
-                            applied["otd_daily"][c][d] += add
-                            line_alloc[d] = c
-                            deficit -= add
+                            old_val = plan["md_daily"][c][d]
+                            row[d] = c
+                            plan["md_daily"][c][d] = old_val + add
+                            proposals.append({
+                                "type": "MD üretim ekle", "card": c, "day": d + 1,
+                                "date": SUS_DATES[d], "line": line,
+                                "old": old_val, "new": old_val + add,
+                                "reason": f"{c} KSM Gün {day+1}'de açık",
+                                "impact": f"+{add:,} adet MD"
+                            })
+                            plan = recalc_stocks(plan)
+                            deficit = max(0, deficit - add)
                             if deficit <= 0: break
                     if deficit <= 0: break
                 if deficit <= 0: break
-        elif stage == "MD":
-            for d in range(max(0, day-2), day+1):
-                for line in ["MD1","MD2"]:
-                    rows = applied["md_alloc"].get(line, [])
-                    for row in rows:
-                        if d < len(row) and row[d] == "":
-                            cap = MD_TEMPO.get(line,{}).get(c, 0)
-                            if cap > 0:
-                                old_val = applied["md_daily"][c][d]
-                                add = min(cap, deficit)
-                                proposals.append({"type":"MD üretim ekle","card":c,"day":d+1,"date":SUS_DATES[d],"line":line,"old":old_val,"new":old_val+add,"reason":f"{c} KSM Gün {day+1}'de −{deficit:,} açık","impact":f"+{add:,} adet MD üretim"})
-                                applied["md_daily"][c][d] += add
-                                row[d] = c
-                                deficit -= add
-                                if deficit <= 0: break
-                        if deficit <= 0: break
-                    if deficit <= 0: break
-                if deficit <= 0: break
-    applied = recalc_stocks(applied)
+            if deficit <= 0: break
+
+    # ─── Sonuç ───
+    plan = recalc_stocks(plan)
     remaining = 0
     for c in SUS_CARDS:
-        for rem_key in ["otd_rem","md_rem","ta_rem"]:
+        for rem_key in ["otd_rem", "md_rem", "ta_rem"]:
             if rem_key == "md_rem" and not PROCESS_MAP.get(c): continue
-            remaining += sum(1 for v in applied[rem_key].get(c,[]) if v < 0)
+            remaining += sum(1 for v in plan[rem_key].get(c, []) if v < 0)
+
     suggestions = []
     if remaining > 0:
-        suggestions.append("Tüm ihlaller otomatik çözülemedi — aşağıdaki öneriler uygulanabilir:")
+        suggestions.append("Tüm ihlaller otomatik çözülemedi:")
         for c in SUS_CARDS:
-            for rem_key, label in [("otd_rem","OTD"),("md_rem","MD"),("ta_rem","TA")]:
+            for rem_key, label in [("otd_rem", "OTD"), ("md_rem", "MD"), ("ta_rem", "TA")]:
                 if rem_key == "md_rem" and not PROCESS_MAP.get(c): continue
-                negs = [(i,v) for i,v in enumerate(applied[rem_key].get(c,[])) if v < 0]
+                negs = [(i, v) for i, v in enumerate(plan[rem_key].get(c, [])) if v < 0]
                 if negs:
-                    worst_day, worst_val = min(negs, key=lambda x: x[1])
-                    suggestions.append(f"• {c} {label}: Gün {worst_day+1}'de {worst_val:,} açık — mesai veya hat eklenmesi gerekli")
+                    wd, wv = min(negs, key=lambda x: x[1])
+                    compat_info = ""
+                    if rem_key == "otd_rem":
+                        compat = [l for l in OTD_LINES if TEMPO[l].get(c, 0) > 0]
+                        compat_info = f" — uyumlu hatlar: {','.join(compat) if compat else 'YOK'}"
+                    suggestions.append(f"• {c} {label}: Gün {wd+1}'de {wv:,} açık{compat_info}")
     else:
-        suggestions.append("✅ Tüm öneriler uygulandığında plan tamamen fizibil hale gelir.")
-        suggestions.append("📈 Daha iyi hale getirmek için:")
-        for c in SUS_CARDS:
-            min_ta = min(applied["ta_rem"].get(c,[999]))
-            if 0 <= min_ta < 200:
-                suggestions.append(f"• {c} TA stoğu minimum {min_ta} — güvenlik marjı düşük, TA fikstür artışı düşünülebilir")
+        suggestions.append("✅ Tüm ihlaller çözüldü.")
+
     status = "feasible" if remaining == 0 else "partial"
-    return {"status":status,"proposals":proposals,"new_plan":applied,"remaining_violations":remaining,"suggestions":suggestions,"message":"Plan optimize edildi!" if remaining==0 else f"{remaining} ihlal kaldı — ek müdahale gerekli"}
+    msg = "Plan optimize edildi!" if remaining == 0 else f"{remaining} ihlal kaldı — ek müdahale gerekli"
+    return {"status": status, "proposals": proposals, "new_plan": plan,
+            "remaining_violations": remaining, "suggestions": suggestions, "message": msg}
 
 # =====================================================================
 # YENİ — Bölüm Bazlı Yardımcı Fonksiyonlar
@@ -477,15 +629,45 @@ def run_stage_opt(plan, stage):
     stage_props = [p for p in full.get("proposals", []) if p["type"].startswith(stage)]
     # Sadece bu aşamanın önerilerini uygula
     new_plan = copy.deepcopy(plan)
+    # Slot2 ve split alanlarını garantile
+    new_plan.setdefault("otd_alloc2", {ln: [""]*N_DAYS for ln in OTD_LINES})
+    new_plan.setdefault("otd_split",  {ln: [(1.0,0.0)]*N_DAYS for ln in OTD_LINES})
     for p in stage_props:
         c, d = p["card"], p["day"] - 1
         if stage == "OTD":
-            new_plan["otd_daily"][c][d] = p["new"]
-            if p.get("line"):
-                alloc = new_plan["otd_alloc"].get(p["line"], [""]*N_DAYS)
-                if d < len(alloc): alloc[d] = c
+            slot = p.get("slot", 1)
+            line = p.get("line", "")
+            if p["type"] == "OTD üretim kes":
+                # Cut: alloc cell'i boşalt, daily'yi düşür
+                if line and line in new_plan["otd_alloc"]:
+                    if d < len(new_plan["otd_alloc"][line]):
+                        new_plan["otd_alloc"][line][d] = ""
+                new_plan["otd_daily"][c][d] = p["new"]
+            elif slot == 2:
+                # Slot2 atama
+                if line:
+                    a2 = new_plan["otd_alloc2"].setdefault(line, [""]*N_DAYS)
+                    if d < len(a2): a2[d] = c
+                    # Split güncelle
+                    s1card = new_plan["otd_alloc"].get(line, [""]*N_DAYS)[d] if d < len(new_plan["otd_alloc"].get(line, [])) else ""
+                    sl = setup_loss(s1card, c) if s1card else 0.0
+                    avail = max(0.0, 1.0 - sl)
+                    sp = new_plan["otd_split"].setdefault(line, [(1.0,0.0)]*N_DAYS)
+                    if d < len(sp): sp[d] = (avail/2.0, avail/2.0)
+                new_plan["otd_daily"][c][d] = p["new"]
+            else:
+                # Slot1 ekleme
+                new_plan["otd_daily"][c][d] = p["new"]
+                if line:
+                    alloc = new_plan["otd_alloc"].get(line, [""]*N_DAYS)
+                    if d < len(alloc): alloc[d] = c
         elif stage == "MD":
             new_plan["md_daily"][c][d] = p["new"]
+            if p.get("line"):
+                rows = new_plan["md_alloc"].get(p["line"], [])
+                for row in rows:
+                    if d < len(row) and row[d] == "":
+                        row[d] = c; break
         elif stage == "TA":
             new_plan["ta_daily"][c][d] = p["new"]
     new_plan = recalc_stocks(new_plan)
@@ -500,18 +682,40 @@ def run_stage_opt(plan, stage):
 def apply_stage_proposals(proposals, plan, stage, approvals=None):
     """Onaylanan önerileri plana uygular ve stokları yeniden hesaplar."""
     applied = copy.deepcopy(plan)
+    applied.setdefault("otd_alloc2", {ln: [""]*N_DAYS for ln in OTD_LINES})
+    applied.setdefault("otd_split",  {ln: [(1.0,0.0)]*N_DAYS for ln in OTD_LINES})
     count = 0
     for i, p in enumerate(proposals):
         if approvals is not None and not approvals.get(i, True):
             continue
         c, d = p["card"], p["day"] - 1
         if stage == "OTD":
-            applied["otd_daily"][c][d] = p["new"]
-            if p.get("line"):
-                alloc = applied["otd_alloc"].get(p["line"], [""]*N_DAYS)
-                if d < len(alloc): alloc[d] = c
+            slot = p.get("slot", 1)
+            line = p.get("line", "")
+            if p["type"] == "OTD üretim kes":
+                if line and d < len(applied["otd_alloc"].get(line, [])):
+                    applied["otd_alloc"][line][d] = ""
+                applied["otd_daily"][c][d] = p["new"]
+            elif slot == 2 and line:
+                a2 = applied["otd_alloc2"].setdefault(line, [""]*N_DAYS)
+                if d < len(a2): a2[d] = c
+                s1card = applied["otd_alloc"].get(line, [""]*N_DAYS)[d] if d < len(applied["otd_alloc"].get(line, [])) else ""
+                sl = setup_loss(s1card, c) if s1card else 0.0
+                avail = max(0.0, 1.0 - sl)
+                sp = applied["otd_split"].setdefault(line, [(1.0,0.0)]*N_DAYS)
+                if d < len(sp): sp[d] = (avail/2.0, avail/2.0)
+                applied["otd_daily"][c][d] = p["new"]
+            else:
+                applied["otd_daily"][c][d] = p["new"]
+                if line and d < len(applied["otd_alloc"].get(line, [])):
+                    applied["otd_alloc"][line][d] = c
         elif stage == "MD":
             applied["md_daily"][c][d] = p["new"]
+            if p.get("line"):
+                rows = applied["md_alloc"].get(p["line"], [])
+                for row in rows:
+                    if d < len(row) and row[d] == "":
+                        row[d] = c; break
         elif stage == "TA":
             applied["ta_daily"][c][d] = p["new"]
         count += 1
@@ -814,7 +1018,7 @@ SETUP_DEFAULT_RATE = 0.50  # Setup değişikliği = %50 verimlilik kaybı
 
 def detect_setup_changes(new_alloc, old_alloc, lines):
     """Alokasyondaki setup değişikliklerini tespit eder.
-    Bir gün önceki kart ile o günkü kart farklıysa setup değişikliği var demektir."""
+    Önceki gün boşsa, daha öncekine bakılır. XC↔XR geçişinde kayıp yok."""
     setups = []
     for ln in lines:
         new_row = new_alloc.get(ln, [""]*N_DAYS)
@@ -826,20 +1030,29 @@ def detect_setup_changes(new_alloc, old_alloc, lines):
             old_card = old_row[i] if i < len(old_row) else ""
             if not new_card:
                 continue
-            # Önceki gün: aynı hattaki bir önceki günün kartı
-            prev_card = new_row[i-1] if i > 0 and (i-1) < len(new_row) else ""
-            # Setup = kart değişti ve hücre dolu
-            is_setup = prev_card != "" and prev_card != new_card
-            # Ayrıca: kullanıcı kartı değiştirdiyse (eski alokasyondan farklı)
+            # ═══ FIX: Önceki NON-EMPTY günü bul ═══
+            prev_card = ""
+            for k in range(i-1, -1, -1):
+                if k < len(new_row) and new_row[k]:
+                    prev_card = new_row[k]
+                    break
+            gap = (i - 1) - max([k for k in range(i-1, -1, -1) if k < len(new_row) and new_row[k]] + [-1])
+            # Setup = farklı kart + setup_loss > 0 (XC↔XR muafiyeti)
+            sl = setup_loss(prev_card, new_card) if prev_card else 0.0
+            # Boş gün varsa setup orada gerçekleşmiş sayılır → ceza yok
+            has_empty_gap = (prev_card != "" and gap >= 1)
+            is_setup = (prev_card != "" and prev_card != new_card and sl > 0 and not has_empty_gap)
             is_user_change = new_card != old_card
             if is_setup or (is_user_change and i == 0 and new_card != old_card):
+                # Yeni oran: 1 - setup_loss (örn. 0.5 → %50)
+                sug_rate = max(0.0, 1.0 - sl) if is_setup else 1.0
                 setups.append({
                     "line": ln, "day_idx": i, "day": i+1, "date": SUS_DATES[i],
                     "prev_card": prev_card, "new_card": new_card,
                     "old_card": old_card,
-                    "suggested_rate": SETUP_DEFAULT_RATE if is_setup else 1.0,
+                    "suggested_rate": sug_rate,
                     "is_user_change": is_user_change,
-                    "reason": f"{prev_card}→{new_card} setup" if is_setup else "ilk gün / değişiklik"
+                    "reason": f"{prev_card}→{new_card} setup ({int(sl*100)}%)" if is_setup else "ilk gün / değişiklik"
                 })
     return setups
 
@@ -1894,8 +2107,17 @@ with tab_panel:
                                 elif not _new_alloc[ln][i]:
                                     rvals.append(1.0)
                                 else:
-                                    prev = _new_alloc[ln][i-1] if i > 0 else ""
-                                    rvals.append(SETUP_DEFAULT_RATE if (prev and prev != _new_alloc[ln][i]) else 1.0)
+                                    # Önceki NON-EMPTY günü bul
+                                    prev = ""
+                                    for k in range(i-1, -1, -1):
+                                        if _new_alloc[ln][k]:
+                                            prev = _new_alloc[ln][k]; break
+                                    gap = i - 1 - max([k for k in range(i-1, -1, -1) if _new_alloc[ln][k]] + [-1])
+                                    if prev and prev != _new_alloc[ln][i] and gap < 1:
+                                        sl = setup_loss(prev, _new_alloc[ln][i])
+                                        rvals.append(max(0.0, 1.0 - sl))
+                                    else:
+                                        rvals.append(1.0)
                             _new_rates[ln] = rvals
                         st.session_state.preview_active = True
                         st.session_state.preview_alloc = _new_alloc
@@ -2256,8 +2478,16 @@ with tab_panel:
                                 elif not new_c:
                                     rvals.append(1.0)
                                 else:
-                                    prev = new_md_alloc[ln][ri][i-1] if i > 0 else ""
-                                    rvals.append(SETUP_DEFAULT_RATE if (prev and prev != new_c) else 1.0)
+                                    prev = ""
+                                    for k in range(i-1, -1, -1):
+                                        if new_md_alloc[ln][ri][k]:
+                                            prev = new_md_alloc[ln][ri][k]; break
+                                    gap = i - 1 - max([k for k in range(i-1, -1, -1) if new_md_alloc[ln][ri][k]] + [-1])
+                                    if prev and prev != new_c and gap < 1:
+                                        sl = setup_loss(prev, new_c)
+                                        rvals.append(max(0.0, 1.0 - sl))
+                                    else:
+                                        rvals.append(1.0)
                             new_md_rates[ln].append(rvals)
 
                         st.session_state.md_preview_active = True
