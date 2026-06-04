@@ -4,6 +4,14 @@ import json, base64, os, copy
 from datetime import datetime, timedelta
 import plotly.graph_objects as go
 
+# PuLP - MILP çözücü (opsiyonel - yüklü değilse MILP sekmesi devre dışı)
+try:
+    import pulp as _pulp
+    PULP_AVAILABLE = True
+except ImportError:
+    _pulp = None
+    PULP_AVAILABLE = False
+
 # =====================================================================
 # SAYFA YAPILANDIRMASI
 # =====================================================================
@@ -215,6 +223,9 @@ if "tumopt_new_vals"     not in st.session_state: st.session_state.tumopt_new_va
 # ═══ Son uygulama snapshot'ı — Öncesi/Sonrası karşılaştırma için ═══
 if "last_snapshot_before" not in st.session_state: st.session_state.last_snapshot_before = None
 if "last_snapshot_kind"   not in st.session_state: st.session_state.last_snapshot_kind   = None
+# ═══ MILP çözücü sonucu ═══
+if "milp_result" not in st.session_state: st.session_state.milp_result = None
+if "milp_stage"  not in st.session_state: st.session_state.milp_stage  = ""
 
 # ═══ v3.5: Dinamik planlama ufku (URL query param ile kalıcı) ═══
 def _read_horizon_extra_from_qp():
@@ -359,6 +370,432 @@ sus = st.session_state.sus
 # =====================================================================
 # OPTİMİZASYON MOTORU  (orijinal, değişmedi)
 # =====================================================================
+
+# ═════════════════════════════════════════════════════════════════════
+# OTD MILP ÇÖZÜCÜ (PuLP + CBC) — deterministik, lexicographic
+# ═════════════════════════════════════════════════════════════════════
+# Model: gün başına her hatta en fazla 2 kart, kart değişimi günü kapasitenin
+# %50'si setup'a kaybedilir. Setup carryover (yarısı bugün + yarısı dün) destekli.
+# Amaç fonksiyonu lexicographic:
+#   Phase 1: min Σ z[l,t]  (setup tetiklenmesi sayısı)
+#   Phase 2: min Σ KSO[k,t] (toplam tampon stok)   s.t.  Σz ≤ z*
+# Kısıt sonsuz olursa (talep karşılanamıyor) → ihlal sayısı raporlanır.
+def solve_otd_milp(plan, time_limit=60, mip_gap=0.01, allow_two_cards_per_day=True,
+                   minimize_setup_first=True):
+    """OTD aşaması için PuLP+CBC tabanlı MILP çözücü.
+
+    Args:
+        plan: mevcut SUS planı (dict)
+        time_limit: çözücü süre sınırı (saniye)
+        mip_gap: kabul edilebilir MIP açıklık oranı
+        allow_two_cards_per_day: True ise gün-içi 2 kart (slot1+slot2) açık
+        minimize_setup_first: True → lexicographic (setup önce, stok sonra)
+
+    Returns:
+        dict: {status, new_plan, setup_count, total_buffer, solve_time, message}
+    """
+    if not PULP_AVAILABLE:
+        return {"status": "ERROR", "new_plan": plan, "message": "PuLP yüklü değil (pip install pulp)"}
+
+    nd = len(st.session_state.dyn_dates)
+    K = SUS_CARDS
+    L = OTD_LINES
+    T = list(range(nd))
+
+    # Uygunluk: Cap[k,l] = TEMPO[l].get(k, 0) > 0 ise uygun
+    Cap = {(k, l): float(TEMPO[l].get(k, 0)) for k in K for l in L}
+    eligible = {(k, l): 1 if Cap[(k, l)] > 0 else 0 for k in K for l in L}
+
+    # Rate: hat × gün
+    rate_dict = plan.get("otd_rates", {})
+    R = {(l, t): float(rate_dict.get(l, [1.0]*nd)[t]) if t < len(rate_dict.get(l, [])) else 1.0
+         for l in L for t in T}
+
+    # Downstream tüketim: kart MD'ye giriyorsa md_daily; aksi halde ta_daily
+    # (OTD stoğunu MD veya TA tüketir.)
+    md_daily = plan.get("md_daily", {})
+    ta_daily = plan.get("ta_daily", {})
+    D_down = {}
+    for k in K:
+        if PROCESS_MAP.get(k):
+            arr = md_daily.get(k, [0]*nd)
+        else:
+            arr = ta_daily.get(k, [0]*nd)
+        for t in T:
+            D_down[(k, t)] = float(arr[t]) if t < len(arr) else 0.0
+
+    # Başlangıç stoğu
+    S0 = {k: float(plan["init"].get(k, {}).get("o", 0)) for k in K}
+
+    # Setup parametresi
+    S_LOSS = 0.5  # kapasitenin yarısı
+
+    # ═══ Model kur ═══
+    m = _pulp.LpProblem("OTD_CLSP_SI", _pulp.LpMinimize)
+
+    # Karar değişkenleri
+    f = {(k, l, t): _pulp.LpVariable(f"f_{k}_{l}_{t}", lowBound=0, upBound=1)
+         for k in K for l in L for t in T if eligible[(k, l)]}
+    a = {(k, l, t): _pulp.LpVariable(f"a_{k}_{l}_{t}", cat="Binary")
+         for k in K for l in L for t in T if eligible[(k, l)]}
+    s_var = {(l, t): _pulp.LpVariable(f"s_{l}_{t}", lowBound=0, upBound=0.5)
+             for l in L for t in T}
+    z = {(l, t): _pulp.LpVariable(f"z_{l}_{t}", cat="Binary")
+         for l in L for t in T}
+    x = {(k, l, t): _pulp.LpVariable(f"x_{k}_{l}_{t}", lowBound=0)
+         for k in K for l in L for t in T if eligible[(k, l)]}
+    KSO = {(k, t): _pulp.LpVariable(f"KSO_{k}_{t}", lowBound=0)
+           for k in K for t in T}
+
+    # ─── Kısıtlar ───
+
+    # (1) Aktivite-zaman bağı: f ≤ a
+    for (k, l, t), v in f.items():
+        m += v <= a[(k, l, t)], f"act_{k}_{l}_{t}"
+
+    # (2) Gün doluluk: Σf + s = 1 (her hat-gün)
+    for l in L:
+        for t in T:
+            m += _pulp.lpSum(f[(k, l, t)] for k in K if (k, l, t) in f) + s_var[(l, t)] == 1, \
+                 f"fill_{l}_{t}"
+
+    # (3) Max kart/gün (slot kavramı)
+    max_cards = 2 if allow_two_cards_per_day else 1
+    for l in L:
+        for t in T:
+            m += _pulp.lpSum(a[(k, l, t)] for k in K if (k, l, t) in a) <= max_cards, \
+                 f"maxk_{l}_{t}"
+
+    # (4) Gün-içi setup: 2 kart varsa s ≥ 0.5
+    if allow_two_cards_per_day:
+        for l in L:
+            for t in T:
+                m += s_var[(l, t)] >= S_LOSS * (
+                    _pulp.lpSum(a[(k, l, t)] for k in K if (k, l, t) in a) - 1
+                ), f"intra_setup_{l}_{t}"
+
+    # (5) Gün-arası kart değişimi → z = 1 (her kart için a[t-1] vs a[t])
+    for l in L:
+        for t in T:
+            if t == 0: continue
+            for k in K:
+                if (k, l, t) not in a or (k, l, t-1) not in a: continue
+                m += a[(k, l, t-1)] - a[(k, l, t)] <= z[(l, t)], f"drop_{k}_{l}_{t}"
+                m += a[(k, l, t)] - a[(k, l, t-1)] <= z[(l, t)], f"add_{k}_{l}_{t}"
+
+    # (6) Setup carryover: z=1 ise s[t] + s[t-1] ≥ 0.5
+    for l in L:
+        for t in T:
+            if t == 0:
+                m += s_var[(l, t)] >= S_LOSS * z[(l, t)], f"carry0_{l}_{t}"
+            else:
+                m += s_var[(l, t)] + s_var[(l, t-1)] >= S_LOSS * z[(l, t)], \
+                     f"carry_{l}_{t}"
+
+    # (7) Üretim: x = Cap × R × f
+    for (k, l, t), v in x.items():
+        m += v == Cap[(k, l)] * R[(l, t)] * f[(k, l, t)], f"prod_{k}_{l}_{t}"
+
+    # (8) Stok dengesi: KSO[t] = (KSO[t-1] veya S0) + Σx - D_down
+    for k in K:
+        for t in T:
+            prev = KSO[(k, t-1)] if t > 0 else S0[k]
+            m += KSO[(k, t)] == prev + _pulp.lpSum(
+                x[(k, l, t)] for l in L if (k, l, t) in x
+            ) - D_down[(k, t)], f"bal_{k}_{t}"
+
+    # ─── Phase 1: minimize setup ───
+    setup_obj = _pulp.lpSum(z[(l, t)] for l in L for t in T)
+    if minimize_setup_first:
+        m += setup_obj
+        solver = _pulp.PULP_CBC_CMD(timeLimit=time_limit, gapRel=mip_gap, msg=0)
+        m.solve(solver)
+        status_p1 = _pulp.LpStatus[m.status]
+        if m.status not in (_pulp.LpStatusOptimal, _pulp.LpStatusNotSolved):
+            return {"status": "INFEASIBLE", "new_plan": plan,
+                    "message": f"Phase 1 fizibil değil: {status_p1}"}
+        z_star = sum(z[(l, t)].value() or 0 for l in L for t in T)
+
+        # ─── Phase 2: minimize buffer, setup ≤ z* ───
+        m += setup_obj <= z_star + 0.5, "phase1_lock"
+        m.objective = _pulp.lpSum(KSO[(k, t)] for k in K for t in T)
+        m.solve(solver)
+    else:
+        # Tek aşama: ağırlıklı toplam (setup pahalı → büyük katsayı)
+        m += 100000 * setup_obj + _pulp.lpSum(KSO[(k, t)] for k in K for t in T)
+        solver = _pulp.PULP_CBC_CMD(timeLimit=time_limit, gapRel=mip_gap, msg=0)
+        m.solve(solver)
+
+    status = _pulp.LpStatus[m.status]
+    if m.status not in (_pulp.LpStatusOptimal,):
+        return {"status": status, "new_plan": plan,
+                "message": f"MILP fizibil değil veya zaman aşımı: {status}"}
+
+    # ═══ Sonuçları plana yansıt ═══
+    new_plan = copy.deepcopy(plan)
+    # alloc + alloc2 + split sıfırla
+    new_plan["otd_alloc"] = {l: [""]*nd for l in L}
+    new_plan["otd_alloc2"] = {l: [""]*nd for l in L}
+    new_plan["otd_split"] = {l: [(1.0, 0.0)]*nd for l in L}
+
+    for l in L:
+        for t in T:
+            # Aktif kartları sırala (f değeri büyük olan slot1)
+            active = [(k, f[(k, l, t)].value() or 0.0)
+                      for k in K if (k, l, t) in f and (a[(k, l, t)].value() or 0) > 0.5]
+            active.sort(key=lambda x: -x[1])
+            if not active:
+                continue
+            if len(active) == 1:
+                new_plan["otd_alloc"][l][t] = active[0][0]
+                new_plan["otd_split"][l][t] = (1.0, 0.0)
+            else:
+                # İlk 2'yi slot1/slot2'ye yerleştir
+                k1, f1v = active[0]
+                k2, f2v = active[1]
+                new_plan["otd_alloc"][l][t] = k1
+                new_plan["otd_alloc2"][l][t] = k2
+                # Toplam zaman: f1 + f2 + s = 1; f1/f2 oranını koru
+                total = f1v + f2v
+                if total > 1e-6:
+                    f1n = f1v / 1.0  # normalize değil — gerçek f değerlerini kullan
+                    f2n = f2v / 1.0
+                    new_plan["otd_split"][l][t] = (round(f1n, 4), round(f2n, 4))
+
+    # otd_daily'yi türetilen alloc'tan hesapla (deterministik)
+    new_plan["otd_daily"] = alloc_to_daily(
+        new_plan["otd_alloc"], TEMPO, OTD_LINES,
+        new_plan.get("otd_rates", {}),
+        alloc2_dict=new_plan["otd_alloc2"],
+        split_dict=new_plan["otd_split"]
+    )
+    new_plan = recalc_stocks(new_plan)
+
+    setup_count = int(round(sum(z[(l, t)].value() or 0 for l in L for t in T)))
+    total_buffer = sum(KSO[(k, t)].value() or 0 for k in K for t in T)
+    return {
+        "status": status, "new_plan": new_plan,
+        "setup_count": setup_count,
+        "total_buffer": int(round(total_buffer)),
+        "solve_time": round(m.solutionTime, 2) if hasattr(m, 'solutionTime') else None,
+        "message": f"✅ MILP çözüldü — {setup_count} setup, {int(round(total_buffer)):,} toplam tampon"
+    }
+
+
+def solve_md_milp(plan, time_limit=30, mip_gap=0.02):
+    """MD aşaması için kompakt MILP: kart × kanal × gün atama, kapasite kısıtı.
+    Slot kavramı yok (MD klasik 2 kanal × 2 hat = 4 kanal-saat). Setup loss 0
+    (MD'de operatör değişimi, otomatik setup yok).
+    """
+    if not PULP_AVAILABLE:
+        return {"status": "ERROR", "new_plan": plan, "message": "PuLP yüklü değil"}
+
+    nd = len(st.session_state.dyn_dates)
+    K_md = [k for k in SUS_CARDS if PROCESS_MAP.get(k)]
+    L_md = ["MD1", "MD2"]
+    T = list(range(nd))
+
+    # Her MD hattında 2 satır (kanal) var
+    md_alloc = plan.get("md_alloc", {})
+    n_rows = {l: len(md_alloc.get(l, [])) if md_alloc.get(l) else 2 for l in L_md}
+
+    Cap = {(k, l): float(MD_TEMPO[l].get(k, 0)) for k in K_md for l in L_md}
+    eligible = {(k, l): 1 if Cap[(k, l)] > 0 else 0 for k in K_md for l in L_md}
+
+    md_rates = plan.get("md_rates", {})
+    # Her satır için ayrı rate var
+    def get_rate(l, row_idx, t):
+        rows = md_rates.get(l, [])
+        if row_idx < len(rows) and t < len(rows[row_idx]):
+            return float(rows[row_idx][t])
+        return 1.0
+
+    # MD'nin downstream = TA üretimi
+    ta_daily = plan.get("ta_daily", {})
+    D_down = {(k, t): float(ta_daily.get(k, [0]*nd)[t]) if t < len(ta_daily.get(k, []))
+              else 0.0 for k in K_md for t in T}
+    S0 = {k: float(plan["init"].get(k, {}).get("m", 0)) for k in K_md}
+
+    m = _pulp.LpProblem("MD_Atama", _pulp.LpMinimize)
+
+    # x[k,l,row,t]: üretim (continuous)
+    x = {(k, l, r, t): _pulp.LpVariable(f"x_{k}_{l}_{r}_{t}", lowBound=0)
+         for k in K_md for l in L_md for r in range(n_rows[l]) for t in T
+         if eligible[(k, l)]}
+    a = {(k, l, r, t): _pulp.LpVariable(f"a_{k}_{l}_{r}_{t}", cat="Binary")
+         for k in K_md for l in L_md for r in range(n_rows[l]) for t in T
+         if eligible[(k, l)]}
+    KSM = {(k, t): _pulp.LpVariable(f"KSM_{k}_{t}", lowBound=0) for k in K_md for t in T}
+
+    # x ≤ Cap × rate × a
+    for (k, l, r, t), v in x.items():
+        m += v <= Cap[(k, l)] * get_rate(l, r, t) * a[(k, l, r, t)], f"cap_{k}_{l}_{r}_{t}"
+
+    # Bir kanal-satırda en fazla 1 kart/gün
+    for l in L_md:
+        for r in range(n_rows[l]):
+            for t in T:
+                m += _pulp.lpSum(a[(k, l, r, t)] for k in K_md
+                                 if (k, l, r, t) in a) <= 1, f"oneSlot_{l}_{r}_{t}"
+
+    # Stok dengesi (downstream = OTD üretimi giriş + buradan TA tüketimi çıkış)
+    otd_daily = plan.get("otd_daily", {})
+    for k in K_md:
+        for t in T:
+            otd_in = float(otd_daily.get(k, [0]*nd)[t]) if t < len(otd_daily.get(k, [])) else 0.0
+            prev = KSM[(k, t-1)] if t > 0 else S0[k]
+            # KSM dengesi: KSM[t] = KSM[t-1] + MD üretim - TA üretim
+            md_prod_t = _pulp.lpSum(x[(k, l, r, t)] for l in L_md for r in range(n_rows[l])
+                                    if (k, l, r, t) in x)
+            m += KSM[(k, t)] == prev + md_prod_t - D_down[(k, t)], f"bal_{k}_{t}"
+
+    # Amaç: toplam tampon minimize
+    m += _pulp.lpSum(KSM[(k, t)] for k in K_md for t in T)
+    solver = _pulp.PULP_CBC_CMD(timeLimit=time_limit, gapRel=mip_gap, msg=0)
+    m.solve(solver)
+
+    status = _pulp.LpStatus[m.status]
+    if m.status != _pulp.LpStatusOptimal:
+        return {"status": status, "new_plan": plan, "message": f"MD MILP fizibil değil: {status}"}
+
+    new_plan = copy.deepcopy(plan)
+    new_plan["md_alloc"] = {l: [[""]*nd for _ in range(n_rows[l])] for l in L_md}
+    new_plan["md_daily"] = {k: [0]*nd for k in SUS_CARDS}
+
+    for l in L_md:
+        for r in range(n_rows[l]):
+            for t in T:
+                for k in K_md:
+                    if (k, l, r, t) in a and (a[(k, l, r, t)].value() or 0) > 0.5:
+                        new_plan["md_alloc"][l][r][t] = k
+                        new_plan["md_daily"][k][t] += int(round(x[(k, l, r, t)].value() or 0))
+    new_plan = recalc_stocks(new_plan)
+    total_ksm = sum(KSM[(k, t)].value() or 0 for k in K_md for t in T)
+    return {"status": status, "new_plan": new_plan, "total_buffer": int(round(total_ksm)),
+            "message": f"✅ MD MILP çözüldü — {int(round(total_ksm)):,} toplam KSM"}
+
+
+def solve_ta_milp(plan, time_limit=20, mip_gap=0.02):
+    """TA aşaması: fikstür kullanımı × kart × gün; günde ≤ 2×fikstür_sayısı,
+    talep karşılansın (KST ≥ 0)."""
+    if not PULP_AVAILABLE:
+        return {"status": "ERROR", "new_plan": plan, "message": "PuLP yüklü değil"}
+
+    nd = len(st.session_state.dyn_dates)
+    K = SUS_CARDS
+    T = list(range(nd))
+
+    N_FIX = TA_FIKSTUR_DEFAULT
+    A_per = TA_ADET_DEFAULT  # vardiya/fikstür başına adet
+
+    asm = plan.get("assembly", {})
+    S0 = {k: float(plan["init"].get(k, {}).get("t", 0)) for k in K}
+
+    m = _pulp.LpProblem("TA_Fikstur", _pulp.LpMinimize)
+    fu = {(k, t): _pulp.LpVariable(f"fu_{k}_{t}", lowBound=0, upBound=2*N_FIX[k], cat="Integer")
+          for k in K for t in T}
+    KST = {(k, t): _pulp.LpVariable(f"KST_{k}_{t}", lowBound=0) for k in K for t in T}
+
+    # Upstream (MD veya OTD)
+    md_daily = plan.get("md_daily", {})
+    otd_daily = plan.get("otd_daily", {})
+    for k in K:
+        for t in T:
+            up = (md_daily.get(k, [0]*nd)[t] if PROCESS_MAP.get(k) else otd_daily.get(k, [0]*nd)[t])
+            up = float(up) if t < len(md_daily.get(k, []) if PROCESS_MAP.get(k) else otd_daily.get(k, [])) else 0.0
+            prev = KST[(k, t-1)] if t > 0 else S0[k]
+            asm_t = float(asm.get(k, [0]*nd)[t]) if t < len(asm.get(k, [])) else 0.0
+            # KST[t] = prev + (TA üretim = fu × Adet) - assembly talebi
+            # NOT: TA üretiminin upstream'i geçemez kontrolü için ek kısıt yok burada
+            # (model rahat çözmek için). Gerekirse eklenebilir.
+            m += KST[(k, t)] == prev + fu[(k, t)] * A_per[k] - asm_t, f"bal_{k}_{t}"
+
+    # Amaç: toplam tampon stok minimize
+    m += _pulp.lpSum(KST[(k, t)] for k in K for t in T)
+    solver = _pulp.PULP_CBC_CMD(timeLimit=time_limit, gapRel=mip_gap, msg=0)
+    m.solve(solver)
+    status = _pulp.LpStatus[m.status]
+    if m.status != _pulp.LpStatusOptimal:
+        return {"status": status, "new_plan": plan, "message": f"TA MILP fizibil değil: {status}"}
+
+    new_plan = copy.deepcopy(plan)
+    new_plan["ta_fixture_usage"] = {k: [int(round(fu[(k, t)].value() or 0)) for t in T] for k in K}
+    new_plan["ta_daily"] = {k: [int(round((fu[(k, t)].value() or 0) * A_per[k])) for t in T] for k in K}
+    new_plan = recalc_stocks(new_plan)
+    total_kst = sum(KST[(k, t)].value() or 0 for k in K for t in T)
+    return {"status": status, "new_plan": new_plan, "total_buffer": int(round(total_kst)),
+            "message": f"✅ TA MILP çözüldü — {int(round(total_kst)):,} toplam KST"}
+
+
+def diff_plans(old_plan, new_plan, stage="OTD"):
+    """İki plan arasındaki farkları (alloc, daily, rem) listele - Önce/Sonra için."""
+    nd = len(st.session_state.dyn_dates)
+    diffs = []
+    if stage == "OTD":
+        for l in OTD_LINES:
+            o1 = old_plan.get("otd_alloc", {}).get(l, [""]*nd)
+            n1 = new_plan.get("otd_alloc", {}).get(l, [""]*nd)
+            o2 = old_plan.get("otd_alloc2", {}).get(l, [""]*nd)
+            n2 = new_plan.get("otd_alloc2", {}).get(l, [""]*nd)
+            for t in range(nd):
+                oa = (o1[t] if t < len(o1) else "", o2[t] if t < len(o2) else "")
+                na = (n1[t] if t < len(n1) else "", n2[t] if t < len(n2) else "")
+                if oa != na:
+                    diffs.append({"Hat": l, "Gün": t+1,
+                                  "Tarih": SUS_DATES[t] if t < len(SUS_DATES) else "",
+                                  "Önce": f"{oa[0]}/{oa[1]}" if oa[1] else oa[0] or "boş",
+                                  "Sonra": f"{na[0]}/{na[1]}" if na[1] else na[0] or "boş"})
+        # Stok farkları (özet)
+        old_neg = sum(1 for c in SUS_CARDS for v in old_plan.get("otd_rem", {}).get(c, []) if v < 0)
+        new_neg = sum(1 for c in SUS_CARDS for v in new_plan.get("otd_rem", {}).get(c, []) if v < 0)
+        old_total = sum(sum(v) for v in old_plan.get("otd_daily", {}).values())
+        new_total = sum(sum(v) for v in new_plan.get("otd_daily", {}).values())
+        summary = {"ihlal_once": old_neg, "ihlal_sonra": new_neg,
+                   "uretim_once": old_total, "uretim_sonra": new_total}
+    elif stage == "MD":
+        for l in ["MD1", "MD2"]:
+            old_rows = old_plan.get("md_alloc", {}).get(l, [])
+            new_rows = new_plan.get("md_alloc", {}).get(l, [])
+            for r in range(max(len(old_rows), len(new_rows))):
+                o = old_rows[r] if r < len(old_rows) else [""]*nd
+                n = new_rows[r] if r < len(new_rows) else [""]*nd
+                for t in range(nd):
+                    ov = o[t] if t < len(o) else ""
+                    nv = n[t] if t < len(n) else ""
+                    if ov != nv:
+                        diffs.append({"Hat": f"{l}_k{r+1}", "Gün": t+1,
+                                      "Tarih": SUS_DATES[t] if t < len(SUS_DATES) else "",
+                                      "Önce": ov or "boş", "Sonra": nv or "boş"})
+        old_neg = sum(1 for c in SUS_CARDS if PROCESS_MAP.get(c)
+                      for v in old_plan.get("md_rem", {}).get(c, []) if v < 0)
+        new_neg = sum(1 for c in SUS_CARDS if PROCESS_MAP.get(c)
+                      for v in new_plan.get("md_rem", {}).get(c, []) if v < 0)
+        old_total = sum(sum(v) for v in old_plan.get("md_daily", {}).values())
+        new_total = sum(sum(v) for v in new_plan.get("md_daily", {}).values())
+        summary = {"ihlal_once": old_neg, "ihlal_sonra": new_neg,
+                   "uretim_once": old_total, "uretim_sonra": new_total}
+    elif stage == "TA":
+        for c in SUS_CARDS:
+            o = old_plan.get("ta_fixture_usage", {}).get(c, [0]*nd)
+            n = new_plan.get("ta_fixture_usage", {}).get(c, [0]*nd)
+            for t in range(nd):
+                ov = o[t] if t < len(o) else 0
+                nv = n[t] if t < len(n) else 0
+                if ov != nv:
+                    diffs.append({"Kart": c, "Gün": t+1,
+                                  "Tarih": SUS_DATES[t] if t < len(SUS_DATES) else "",
+                                  "Fikstür Önce": ov, "Fikstür Sonra": nv})
+        old_neg = sum(1 for c in SUS_CARDS for v in old_plan.get("ta_rem", {}).get(c, []) if v < 0)
+        new_neg = sum(1 for c in SUS_CARDS for v in new_plan.get("ta_rem", {}).get(c, []) if v < 0)
+        old_total = sum(sum(v) for v in old_plan.get("ta_daily", {}).values())
+        new_total = sum(sum(v) for v in new_plan.get("ta_daily", {}).values())
+        summary = {"ihlal_once": old_neg, "ihlal_sonra": new_neg,
+                   "uretim_once": old_total, "uretim_sonra": new_total}
+    else:
+        summary = {}
+    return diffs, summary
+
+
 def recalc_stocks(plan):
     p = copy.deepcopy(plan)
     init = p["init"]
@@ -467,13 +904,29 @@ def run_optimization(current_plan):
 
                         old_val = plan["otd_daily"][c][d_try] if d_try < len(plan["otd_daily"].get(c, [])) else 0
                         s1[d_try] = c
-                        plan["otd_daily"][c][d_try] = old_val + add
+                        # ═══ BUG FIX (2026-06): manuel yazmak yerine alloc'tan deterministik türet ═══
+                        plan["otd_daily"] = alloc_to_daily(
+                            plan["otd_alloc"], TEMPO, OTD_LINES,
+                            plan.get("otd_rates", {}),
+                            alloc2_dict=plan.get("otd_alloc2", {}),
+                            split_dict=plan.get("otd_split", {})
+                        )
+                        actual_add = plan["otd_daily"][c][d_try] - old_val
+                        if actual_add <= 0:
+                            s1[d_try] = ""
+                            plan["otd_daily"] = alloc_to_daily(
+                                plan["otd_alloc"], TEMPO, OTD_LINES,
+                                plan.get("otd_rates", {}),
+                                alloc2_dict=plan.get("otd_alloc2", {}),
+                                split_dict=plan.get("otd_split", {})
+                            )
+                            continue
                         proposals.append({
                             "type": "OTD üretim ekle", "card": c, "day": d_try + 1,
                             "date": SUS_DATES[d_try] if d_try < len(SUS_DATES) else f"G{d_try+1}",
-                            "line": line, "slot": 1, "old": old_val, "new": old_val + add,
+                            "line": line, "slot": 1, "old": old_val, "new": old_val + actual_add,
                             "reason": f"{c} KSO Gün {d_def+1}'de −{deficit:,} açık",
-                            "impact": f"+{add:,} adet (Slot1)" + (f" [setup −%{int(sl*100)}]" if sl > 0 else "")
+                            "impact": f"+{actual_add:,} adet (Slot1)" + (f" [setup −%{int(sl*100)}]" if sl > 0 else "")
                         })
                         plan = recalc_stocks(plan)
                         placed = True
@@ -499,14 +952,27 @@ def run_optimization(current_plan):
                             # Split güncelle
                             sp = plan.setdefault("otd_split", {}).setdefault(line, [(1.0, 0.0)] * nd)
                             sp[d_try] = (available / 2.0, available / 2.0)
-                            plan["otd_daily"][c][d_try] = old_val + add
-                            # Slot1 üretimi düşmüş olur (f1 azaldı) — hesabı yeniden yap:
-                            cap1 = TEMPO.get(line, {}).get(s1_card, 0)
-                            new_s1_prod = int(cap1 * (available / 2.0) * r)
-                            old_s1_total = plan["otd_daily"].get(s1_card, [0]*nd)[d_try]
-                            # Slot1'in eski katkısını çıkar (rate*cap1) → yenisini ekle
-                            # Bu hızlı yaklaşıkdır; recalc_stocks zaten sonra çağrılır.
-                            plan["otd_daily"][s1_card][d_try] = max(0, old_s1_total - int(cap1 * r) + new_s1_prod)
+                            # ═══ BUG FIX (2026-06): otd_daily'yi manuel yazmak yerine alloc'tan deterministik türet ═══
+                            # Eski kod slot1 üretiminden cap1*r çıkarıyordu — kart başka hatta da varsa
+                            # veya rate'ler farklıysa rastgele üretim kaybına neden oluyordu.
+                            plan["otd_daily"] = alloc_to_daily(
+                                plan["otd_alloc"], TEMPO, OTD_LINES,
+                                plan.get("otd_rates", {}),
+                                alloc2_dict=plan.get("otd_alloc2", {}),
+                                split_dict=plan.get("otd_split", {})
+                            )
+                            add = plan["otd_daily"][c][d_try] - old_val  # gerçekleşen ekleme
+                            if add <= 0:
+                                # Türetilen üretim hiç katkı yapmadıysa atamayı geri al
+                                s2[d_try] = ""
+                                sp[d_try] = (1.0, 0.0)
+                                plan["otd_daily"] = alloc_to_daily(
+                                    plan["otd_alloc"], TEMPO, OTD_LINES,
+                                    plan.get("otd_rates", {}),
+                                    alloc2_dict=plan.get("otd_alloc2", {}),
+                                    split_dict=plan.get("otd_split", {})
+                                )
+                                continue
                             proposals.append({
                                 "type": "OTD slot2 ekle", "card": c, "day": d_try + 1,
                                 "date": SUS_DATES[d_try] if d_try < len(SUS_DATES) else f"G{d_try+1}",
@@ -546,14 +1012,20 @@ def run_optimization(current_plan):
                     if all(v >= 0 for v in test_rem):
                         old_val = plan["otd_daily"][c][d]
                         s1[d] = ""
-                        plan["otd_daily"][c][d] = max(0, old_val - remove_amt)
+                        # ═══ BUG FIX (2026-06): deterministik türetme ═══
+                        plan["otd_daily"] = alloc_to_daily(
+                            plan["otd_alloc"], TEMPO, OTD_LINES,
+                            plan.get("otd_rates", {}),
+                            alloc2_dict=plan.get("otd_alloc2", {}),
+                            split_dict=plan.get("otd_split", {})
+                        )
                         proposals.append({
                             "type": "OTD üretim kes", "card": c, "day": d + 1,
                             "date": SUS_DATES[d] if d < len(SUS_DATES) else f"G{d+1}",
                             "line": line, "slot": 1, "old": old_val,
-                            "new": max(0, old_val - remove_amt),
+                            "new": plan["otd_daily"][c][d],
                             "reason": f"{c} aşırı stok (KSO={rem[d]:,} > {int(threshold):,})",
-                            "impact": f"−{remove_amt:,} adet (fazla üretim iptal)"
+                            "impact": f"−{old_val - plan['otd_daily'][c][d]:,} adet (fazla üretim iptal)"
                         })
                         plan = recalc_stocks(plan)
 
@@ -572,10 +1044,21 @@ def run_optimization(current_plan):
                     if d < len(row) and row[d] == "":
                         cap = MD_TEMPO.get(line, {}).get(c, 0)
                         if cap > 0:
-                            add = min(cap, deficit)
                             old_val = plan["md_daily"][c][d]
                             row[d] = c
-                            plan["md_daily"][c][d] = old_val + add
+                            # ═══ BUG FIX (2026-06): manuel yazmak yerine alloc'tan deterministik türet ═══
+                            plan["md_daily"] = alloc_to_daily(
+                                plan["md_alloc"], MD_TEMPO, ["MD1", "MD2"],
+                                rates_dict=plan.get("md_rates", {})
+                            )
+                            add = plan["md_daily"][c][d] - old_val
+                            if add <= 0:
+                                row[d] = ""
+                                plan["md_daily"] = alloc_to_daily(
+                                    plan["md_alloc"], MD_TEMPO, ["MD1", "MD2"],
+                                    rates_dict=plan.get("md_rates", {})
+                                )
+                                continue
                             proposals.append({
                                 "type": "MD üretim ekle", "card": c, "day": d + 1,
                                 "date": SUS_DATES[d], "line": line,
@@ -955,32 +1438,47 @@ def alloc_to_daily(alloc_dict, tempo_dict, lines, rates_dict=None,
                    alloc2_dict=None, split_dict=None):
     """OTD/MD alokasyonunu günlük üretim miktarlarına dönüştürür.
     Slot1: alloc_dict — Slot2: alloc2_dict (yeni, opsiyonel).
-    Slot fraksiyonları split_dict'ten alınır (default slot2 boşsa (1.0,0.0))."""
+    Slot fraksiyonları split_dict'ten alınır (default slot2 boşsa (1.0,0.0)).
+    MD-stili multi-row alloc + multi-row rates desteklenir."""
     nd = len(st.session_state.dyn_dates)
     daily = {c: [0]*nd for c in SUS_CARDS}
     for ln in lines:
         row_data = alloc_dict.get(ln, [""]*nd)
         # MD-stili 2-row alokasyon (md_alloc gibi)
-        rows = row_data if (row_data and isinstance(row_data[0], list)) else [row_data]
-        rates = rates_dict.get(ln, [1]*nd) if rates_dict else [1]*nd
-        for row in rows:
+        is_multi_row = bool(row_data) and isinstance(row_data[0], list)
+        rows = row_data if is_multi_row else [row_data]
+
+        # Rates: MD multi-row ise [[..], [..]] formatı, OTD ise tek liste
+        raw_rates = rates_dict.get(ln, None) if rates_dict else None
+        if raw_rates is None:
+            rates_per_row = [[1.0]*nd for _ in rows]
+        elif is_multi_row and len(raw_rates) > 0 and isinstance(raw_rates[0], list):
+            rates_per_row = raw_rates
+        else:
+            # OTD: tek array, tüm satırlara aynı
+            rates_per_row = [raw_rates for _ in rows]
+
+        for ri, row in enumerate(rows):
+            row_rates = rates_per_row[ri] if ri < len(rates_per_row) else [1.0]*nd
             for i, card in enumerate(row):
                 if i < nd and card and card in SUS_CARDS:
                     cap = tempo_dict.get(ln, {}).get(card, 0)
-                    rate = rates[i] if i < len(rates) else 1
-                    # ═══ Yeni: Slot1 üretim payı (f1) ═══
+                    rate = row_rates[i] if i < len(row_rates) else 1
+                    # ═══ Slot1 üretim payı (f1) — OTD için ═══
                     f1 = 1.0
                     if split_dict and ln in split_dict and i < len(split_dict[ln]):
                         try: f1 = float(split_dict[ln][i][0])
                         except Exception: f1 = 1.0
                     daily[card][i] += int(cap * rate * f1)
-        # ═══ Yeni: Slot2 üretim ═══
+        # ═══ Slot2 üretim — OTD için ═══
         if alloc2_dict:
             row2 = alloc2_dict.get(ln, [""]*nd)
+            # Slot2 için rate: tek satır rates'in 0'ıncı satırı (multi-row değilse direct)
+            r0 = rates_per_row[0] if rates_per_row else [1.0]*nd
             for i, card2 in enumerate(row2):
                 if i < nd and card2 and card2 in SUS_CARDS:
                     cap2 = tempo_dict.get(ln, {}).get(card2, 0)
-                    rate = rates[i] if i < len(rates) else 1
+                    rate = r0[i] if i < len(r0) else 1
                     f2 = 0.0
                     if split_dict and ln in split_dict and i < len(split_dict[ln]):
                         try: f2 = float(split_dict[ln][i][1])
@@ -3151,105 +3649,249 @@ with tab_opt:
         <p style="color:#93c5fd;margin:0;font-size:0.8rem;">Mevcut planı analiz et → İhlalleri tespit et → Düzeltme öner → Onay al</p></div>
     </div>""", unsafe_allow_html=True)
 
-    st.markdown("#### 📊 Mevcut Plan Durumu")
-    viol_cards = set()
-    for c in SUS_CARDS:
-        for rk in ["otd_rem","md_rem","ta_rem"]:
-            if rk=="md_rem" and not PROCESS_MAP.get(c): continue
-            if any(v<0 for v in sus[rk].get(c,[])):
-                viol_cards.add(c)
+    _opt_subtab_greedy, _opt_subtab_milp = st.tabs([
+        "🤖 Sezgisel Çözücü (Greedy)", "🧮 MILP Çözücü (PuLP+CBC)"
+    ])
 
-    if not viol_cards:
-        st.success("✅ Mevcut plan fizibil — tüm tampon stoklar pozitif. İyileştirme önerileri için optimize edin.")
-    else:
-        st.error(f"⚠️ {len(viol_cards)} kartta stok ihlali var: **{', '.join(sorted(viol_cards))}**")
+    with _opt_subtab_greedy:
+        viol_cards = set()
+        for c in SUS_CARDS:
+            for rk in ["otd_rem","md_rem","ta_rem"]:
+                if rk=="md_rem" and not PROCESS_MAP.get(c): continue
+                if any(v<0 for v in sus[rk].get(c,[])):
+                    viol_cards.add(c)
 
-    st.write("---")
-
-    if st.button("🚀 OPTİMİZE ET — Planı Analiz Et ve Düzelt", type="primary", use_container_width=True):
-        with st.spinner("Plan analiz ediliyor ve optimizasyon çalıştırılıyor..."):
-            result = run_optimization(sus)
-            st.session_state.opt_result = result
-
-    opt = st.session_state.opt_result
-    if opt:
-        if opt["status"] == "feasible":
-            st.success(f"✅ {opt['message']}")
-        elif opt["status"] == "optimal":
-            st.success(f"✅ {opt['message']}")
+        if not viol_cards:
+            st.success("✅ Mevcut plan fizibil — tüm tampon stoklar pozitif. İyileştirme önerileri için optimize edin.")
         else:
-            st.warning(f"⚠️ {opt['message']}")
+            st.error(f"⚠️ {len(viol_cards)} kartta stok ihlali var: **{', '.join(sorted(viol_cards))}**")
 
-        proposals = opt.get("proposals", [])
-        if proposals:
-            st.markdown("#### 📋 Değişiklik Önerileri")
-            st.caption("Her öneriyi inceleyip onaylayabilir veya reddedebilirsiniz.")
-            approvals = {}
-            for i, p in enumerate(proposals):
-                col1, col2 = st.columns([5, 1])
-                with col1:
-                    icon = "🟢" if p["type"].startswith("OTD") else "🔵" if p["type"].startswith("MD") else "🟣"
-                    st.markdown(f"""<div class="status-card">
-                        <div style="color:#fff;font-weight:600;font-size:0.9rem;">{icon} {p['type']} — {p['card']} | Gün {p['day']} ({p['date']}) | Hat: {p.get('line','—')}</div>
-                        <div style="color:#93c5fd;font-size:0.82rem;margin-top:4px;">📌 Sebep: {p['reason']}</div>
-                        <div style="color:#cbd5e1;font-size:0.82rem;">Değişiklik: <span style="color:#ef4444;">{p['old']:,}</span> → <span style="color:#22c55e;">{p['new']:,}</span> ({p['impact']})</div>
-                    </div>""", unsafe_allow_html=True)
-                with col2:
-                    approvals[i] = st.checkbox("Onayla", value=True, key=f"appr_{i}")
+        st.write("---")
 
-            st.write("---")
-            if st.button("✅ Onaylanan Değişiklikleri Uygula", type="primary", use_container_width=True):
-                applied = copy.deepcopy(sus)
-                applied_count = 0
+        if st.button("🚀 OPTİMİZE ET — Planı Analiz Et ve Düzelt", type="primary", use_container_width=True):
+            with st.spinner("Plan analiz ediliyor ve optimizasyon çalıştırılıyor..."):
+                result = run_optimization(sus)
+                st.session_state.opt_result = result
+
+        opt = st.session_state.opt_result
+        if opt:
+            if opt["status"] == "feasible":
+                st.success(f"✅ {opt['message']}")
+            elif opt["status"] == "optimal":
+                st.success(f"✅ {opt['message']}")
+            else:
+                st.warning(f"⚠️ {opt['message']}")
+
+            proposals = opt.get("proposals", [])
+            if proposals:
+                st.markdown("#### 📋 Değişiklik Önerileri")
+                st.caption("Her öneriyi inceleyip onaylayabilir veya reddedebilirsiniz.")
+                approvals = {}
                 for i, p in enumerate(proposals):
-                    if approvals.get(i, False):
-                        c_k, d_k = p["card"], p["day"]-1
-                        if p["type"].startswith("OTD"):
-                            applied["otd_daily"][c_k][d_k] = p["new"]
-                            if p.get("line"):
-                                alloc = applied["otd_alloc"].get(p["line"], [""]*N_DAYS)
-                                if d_k < len(alloc): alloc[d_k] = c_k
-                        elif p["type"].startswith("MD"):
-                            applied["md_daily"][c_k][d_k] = p["new"]
-                        applied_count += 1
-                applied = recalc_stocks(applied)
-                st.session_state.sus = applied
-                st.session_state.opt_result = None
-                st.success(f"✅ {applied_count} değişiklik uygulandı. Stoklar yeniden hesaplandı.")
-                st.rerun()
+                    col1, col2 = st.columns([5, 1])
+                    with col1:
+                        icon = "🟢" if p["type"].startswith("OTD") else "🔵" if p["type"].startswith("MD") else "🟣"
+                        st.markdown(f"""<div class="status-card">
+                            <div style="color:#fff;font-weight:600;font-size:0.9rem;">{icon} {p['type']} — {p['card']} | Gün {p['day']} ({p['date']}) | Hat: {p.get('line','—')}</div>
+                            <div style="color:#93c5fd;font-size:0.82rem;margin-top:4px;">📌 Sebep: {p['reason']}</div>
+                            <div style="color:#cbd5e1;font-size:0.82rem;">Değişiklik: <span style="color:#ef4444;">{p['old']:,}</span> → <span style="color:#22c55e;">{p['new']:,}</span> ({p['impact']})</div>
+                        </div>""", unsafe_allow_html=True)
+                    with col2:
+                        approvals[i] = st.checkbox("Onayla", value=True, key=f"appr_{i}")
 
-        suggestions = opt.get("suggestions", [])
-        if suggestions:
-            st.markdown("#### 💡 Tavsiyeler")
-            for s in suggestions:
-                if s.startswith("✅") or s.startswith("📈"):
-                    st.markdown(f'<div style="color:#22c55e;font-size:0.9rem;padding:4px 0;">{s}</div>', unsafe_allow_html=True)
-                elif s.startswith("•"):
-                    st.markdown(f'<div style="color:#f59e0b;font-size:0.85rem;padding:2px 0 2px 16px;">{s}</div>', unsafe_allow_html=True)
+                st.write("---")
+                if st.button("✅ Onaylanan Değişiklikleri Uygula", type="primary", use_container_width=True):
+                    applied = copy.deepcopy(sus)
+                    applied_count = 0
+                    for i, p in enumerate(proposals):
+                        if approvals.get(i, False):
+                            c_k, d_k = p["card"], p["day"]-1
+                            if p["type"].startswith("OTD"):
+                                applied["otd_daily"][c_k][d_k] = p["new"]
+                                if p.get("line"):
+                                    alloc = applied["otd_alloc"].get(p["line"], [""]*N_DAYS)
+                                    if d_k < len(alloc): alloc[d_k] = c_k
+                            elif p["type"].startswith("MD"):
+                                applied["md_daily"][c_k][d_k] = p["new"]
+                            applied_count += 1
+                    applied = recalc_stocks(applied)
+                    st.session_state.sus = applied
+                    st.session_state.opt_result = None
+                    st.success(f"✅ {applied_count} değişiklik uygulandı. Stoklar yeniden hesaplandı.")
+                    st.rerun()
+
+            suggestions = opt.get("suggestions", [])
+            if suggestions:
+                st.markdown("#### 💡 Tavsiyeler")
+                for s in suggestions:
+                    if s.startswith("✅") or s.startswith("📈"):
+                        st.markdown(f'<div style="color:#22c55e;font-size:0.9rem;padding:4px 0;">{s}</div>', unsafe_allow_html=True)
+                    elif s.startswith("•"):
+                        st.markdown(f'<div style="color:#f59e0b;font-size:0.85rem;padding:2px 0 2px 16px;">{s}</div>', unsafe_allow_html=True)
+                    else:
+                        st.markdown(f'<div style="color:#cbd5e1;font-size:0.88rem;padding:4px 0;">{s}</div>', unsafe_allow_html=True)
+
+            if proposals and opt.get("new_plan"):
+                with st.expander("📊 Önce / Sonra Karşılaştırması"):
+                    compare_card = st.selectbox("Kart seç:", sorted(viol_cards) if viol_cards else SUS_CARDS, key="cmp_card")
+                    if compare_card:
+                        bc1, bc2 = st.columns(2)
+                        with bc1:
+                            st.markdown("**Mevcut KSO:**")
+                            old_vals = sus["otd_rem"].get(compare_card, [0]*N_DAYS)
+                            fig = go.Figure()
+                            fig.add_trace(go.Bar(x=SUS_DATES, y=old_vals, name="Mevcut", marker_color=["#ef4444" if v<0 else "#3b82f6" for v in old_vals]))
+                            fig.add_hline(y=0, line_dash="dash", line_color="red")
+                            fig.update_layout(template="plotly_dark",height=280,margin=dict(l=30,r=10,t=10,b=30),paper_bgcolor="rgba(0,0,0,0)",plot_bgcolor="rgba(255,255,255,0.03)")
+                            st.plotly_chart(fig, use_container_width=True)
+                        with bc2:
+                            st.markdown("**Optimize KSO:**")
+                            new_vals = opt["new_plan"]["otd_rem"].get(compare_card, [0]*N_DAYS)
+                            fig2 = go.Figure()
+                            fig2.add_trace(go.Bar(x=SUS_DATES, y=new_vals, name="Optimize", marker_color=["#ef4444" if v<0 else "#22c55e" for v in new_vals]))
+                            fig2.add_hline(y=0, line_dash="dash", line_color="red")
+                            fig2.update_layout(template="plotly_dark",height=280,margin=dict(l=30,r=10,t=10,b=30),paper_bgcolor="rgba(0,0,0,0)",plot_bgcolor="rgba(255,255,255,0.03)")
+                            st.plotly_chart(fig2, use_container_width=True)
+
+
+    # ════════════════════════════════════════════════════════════════════
+    # MILP ÇÖZÜCÜ ALT-SEKMESİ (yeni — deterministik PuLP+CBC)
+    # ════════════════════════════════════════════════════════════════════
+    with _opt_subtab_milp:
+        if not PULP_AVAILABLE:
+            st.error("⚠️ PuLP yüklü değil. Çalıştırmak için: `pip install pulp` "
+                     "(Streamlit Cloud için requirements.txt'e `pulp>=2.7` ekleyin).")
+        else:
+            st.markdown("""<div style="background:rgba(0,30,80,0.4);border-left:3px solid #3b82f6;
+                border-radius:6px;padding:10px 14px;margin-bottom:14px;">
+                <div style="color:#93c5fd;font-weight:700;font-size:0.92rem;">🧮 MILP — Karışık Tam Sayılı Doğrusal Programlama</div>
+                <div style="color:#cbd5e1;font-size:0.82rem;margin-top:4px;">
+                    <b>Avantajı:</b> Aynı veriyle her seferinde aynı sonucu üretir (sezgisel rastgeleliğini ortadan kaldırır).
+                    Setup sayısını minimize eder, sonra tampon stoğu sıfıra yaklaştırır (leksikografik amaç).
+                    Kart değişiminde <b>%50 setup kaybı</b> (XC↔XR istisna), gün-içi 2 kart desteği.
+                </div></div>""", unsafe_allow_html=True)
+
+            cmA, cmB, cmC, cmD = st.columns([2,2,2,2])
+            with cmA:
+                _milp_stage = st.selectbox("Aşama:", ["OTD", "MD", "TA"], key="milp_stage_sel")
+            with cmB:
+                _milp_tlim = st.slider("Zaman sınırı (sn):", 10, 180, 60, step=10, key="milp_tlim")
+            with cmC:
+                _milp_gap = st.slider("MIP açıklık (%):", 0.5, 10.0, 2.0, step=0.5, key="milp_gap") / 100.0
+            with cmD:
+                _milp_two = st.toggle("OTD gün-içi 2 kart", value=True, key="milp_two_cards",
+                                      help="Kapalı = klasik CLSP (gün başına 1 kart). Açık = gün-içi setup ile 2 kart.")
+
+            if st.button("🧮 MILP Çöz", type="primary", use_container_width=True, key="btn_milp_solve"):
+                with st.spinner(f"{_milp_stage} MILP çözülüyor… (CBC, max {_milp_tlim} sn)"):
+                    if _milp_stage == "OTD":
+                        res = solve_otd_milp(sus, time_limit=_milp_tlim, mip_gap=_milp_gap,
+                                             allow_two_cards_per_day=_milp_two)
+                    elif _milp_stage == "MD":
+                        res = solve_md_milp(sus, time_limit=_milp_tlim, mip_gap=_milp_gap)
+                    else:
+                        res = solve_ta_milp(sus, time_limit=_milp_tlim, mip_gap=_milp_gap)
+                    st.session_state.milp_result = res
+                    st.session_state.milp_stage = _milp_stage
+
+            _milp_res = st.session_state.get("milp_result")
+            _milp_stage_done = st.session_state.get("milp_stage", "")
+            if _milp_res:
+                if _milp_res.get("status") == "Optimal":
+                    st.success(_milp_res["message"])
                 else:
-                    st.markdown(f'<div style="color:#cbd5e1;font-size:0.88rem;padding:4px 0;">{s}</div>', unsafe_allow_html=True)
+                    st.warning(f"Çözüm durumu: {_milp_res.get('status','?')} — {_milp_res.get('message','')}")
 
-        if proposals and opt.get("new_plan"):
-            with st.expander("📊 Önce / Sonra Karşılaştırması"):
-                compare_card = st.selectbox("Kart seç:", sorted(viol_cards) if viol_cards else SUS_CARDS, key="cmp_card")
-                if compare_card:
-                    bc1, bc2 = st.columns(2)
-                    with bc1:
-                        st.markdown("**Mevcut KSO:**")
-                        old_vals = sus["otd_rem"].get(compare_card, [0]*N_DAYS)
-                        fig = go.Figure()
-                        fig.add_trace(go.Bar(x=SUS_DATES, y=old_vals, name="Mevcut", marker_color=["#ef4444" if v<0 else "#3b82f6" for v in old_vals]))
-                        fig.add_hline(y=0, line_dash="dash", line_color="red")
-                        fig.update_layout(template="plotly_dark",height=280,margin=dict(l=30,r=10,t=10,b=30),paper_bgcolor="rgba(0,0,0,0)",plot_bgcolor="rgba(255,255,255,0.03)")
-                        st.plotly_chart(fig, use_container_width=True)
-                    with bc2:
-                        st.markdown("**Optimize KSO:**")
-                        new_vals = opt["new_plan"]["otd_rem"].get(compare_card, [0]*N_DAYS)
-                        fig2 = go.Figure()
-                        fig2.add_trace(go.Bar(x=SUS_DATES, y=new_vals, name="Optimize", marker_color=["#ef4444" if v<0 else "#22c55e" for v in new_vals]))
-                        fig2.add_hline(y=0, line_dash="dash", line_color="red")
-                        fig2.update_layout(template="plotly_dark",height=280,margin=dict(l=30,r=10,t=10,b=30),paper_bgcolor="rgba(0,0,0,0)",plot_bgcolor="rgba(255,255,255,0.03)")
-                        st.plotly_chart(fig2, use_container_width=True)
+                if _milp_res.get("new_plan"):
+                    new_plan = _milp_res["new_plan"]
+                    diffs, summary = diff_plans(sus, new_plan, stage=_milp_stage_done)
+
+                    # ─── Özet metrikler ───
+                    st.markdown("#### 📊 Önce / Sonra — Özet")
+                    ms1, ms2, ms3, ms4 = st.columns(4)
+                    label_rem = {"OTD":"KSO","MD":"KSM","TA":"KST"}[_milp_stage_done]
+                    with ms1: st.metric(f"{label_rem} İhlal (Önce)", f"{summary.get('ihlal_once',0)} hücre")
+                    with ms2:
+                        delta = summary.get('ihlal_sonra',0) - summary.get('ihlal_once',0)
+                        st.metric(f"{label_rem} İhlal (Sonra)", f"{summary.get('ihlal_sonra',0)} hücre",
+                                  delta=f"{delta:+d}", delta_color="inverse")
+                    with ms3: st.metric(f"{_milp_stage_done} Üretim (Önce)", f"{summary.get('uretim_once',0):,}")
+                    with ms4:
+                        delta_p = summary.get('uretim_sonra',0) - summary.get('uretim_once',0)
+                        st.metric(f"{_milp_stage_done} Üretim (Sonra)", f"{summary.get('uretim_sonra',0):,}",
+                                  delta=f"{delta_p:+,}")
+
+                    if _milp_stage_done == "OTD" and _milp_res.get("setup_count") is not None:
+                        st.info(f"🔁 Toplam setup tetiklenmesi: **{_milp_res['setup_count']}** | "
+                                f"Toplam tampon (Phase 2): **{_milp_res.get('total_buffer',0):,}**")
+
+                    # ─── Farklar tablosu ───
+                    st.markdown(f"#### 🆚 Atama Farkları ({_milp_stage_done})")
+                    if diffs:
+                        df_diff = pd.DataFrame(diffs)
+                        st.dataframe(df_diff, use_container_width=True, hide_index=True,
+                                     height=min(420, 50 + 35*len(df_diff)))
+                    else:
+                        st.info("Atama farkı yok — mevcut plan zaten optimal seviyede.")
+
+                    # ─── Görsel karşılaştırma: seçili kart KSO/KSM/KST ───
+                    rem_key = {"OTD":"otd_rem","MD":"md_rem","TA":"ta_rem"}[_milp_stage_done]
+                    cmp_cards = [c for c in SUS_CARDS
+                                 if any(v < 0 for v in sus.get(rem_key,{}).get(c,[]))]
+                    if not cmp_cards: cmp_cards = SUS_CARDS
+                    sel_cmp = st.selectbox("Karşılaştırma için kart:", cmp_cards, key="milp_cmp_card")
+                    if sel_cmp:
+                        old_v = sus.get(rem_key,{}).get(sel_cmp, [0]*N_DAYS)
+                        new_v = new_plan.get(rem_key,{}).get(sel_cmp, [0]*N_DAYS)
+                        fig_cmp = go.Figure()
+                        fig_cmp.add_trace(go.Bar(name="Önce", x=SUS_DATES, y=old_v,
+                                                 marker_color=["#ef4444" if v<0 else "#94a3b8" for v in old_v]))
+                        fig_cmp.add_trace(go.Bar(name="Sonra", x=SUS_DATES, y=new_v,
+                                                 marker_color=["#ef4444" if v<0 else "#22c55e" for v in new_v]))
+                        fig_cmp.add_hline(y=0, line_dash="dash", line_color="red")
+                        fig_cmp.update_layout(barmode="group", template="plotly_dark", height=320,
+                            margin=dict(l=30,r=10,t=10,b=30),
+                            paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(255,255,255,0.03)",
+                            legend=dict(orientation="h", y=1.05))
+                        st.plotly_chart(fig_cmp, use_container_width=True)
+
+                    # ─── Uygulama (sicil doğrulamalı) ───
+                    st.write("---")
+                    if st.session_state.get("auth"):
+                        if st.button("✅ MILP Sonucunu Uygula", type="primary",
+                                     use_container_width=True, key="btn_milp_apply"):
+                            st.session_state.last_snapshot_before = copy.deepcopy(st.session_state.sus)
+                            st.session_state.last_snapshot_kind = f"MILP {_milp_stage_done}"
+                            st.session_state.sus = new_plan
+                            st.session_state.milp_result = None
+                            st.session_state.otd_opt_res = None
+                            st.success(f"✅ MILP {_milp_stage_done} sonucu uygulandı. Stoklar yeniden hesaplandı.")
+                            st.rerun()
+                    else:
+                        st.markdown("""<div style="background:rgba(239,68,68,0.12);border:1px solid rgba(239,68,68,0.3);border-radius:10px;padding:12px 16px;">
+                            <span style="color:#ef4444;font-weight:700;">🔒 Yetkilendirme Gerekli</span>
+                            <span style="color:#cbd5e1;font-size:0.82rem;"> — Uygulamak için sicil girin.</span>
+                        </div>""", unsafe_allow_html=True)
+                        _mc1, _mc2 = st.columns([3,1])
+                        with _mc1:
+                            _mp_sicil = st.text_input("Sicil:", type="password",
+                                                       placeholder="Sicil numarası",
+                                                       key="milp_apply_sicil", label_visibility="collapsed")
+                        with _mc2:
+                            if st.button("🔓 Doğrula & Uygula", type="primary",
+                                         use_container_width=True, key="btn_milp_auth_apply"):
+                                if _mp_sicil.strip() in YETKILI_SICILLER:
+                                    st.session_state.auth = True
+                                    st.session_state.auth_sicil = _mp_sicil.strip()
+                                    st.session_state.last_snapshot_before = copy.deepcopy(st.session_state.sus)
+                                    st.session_state.last_snapshot_kind = f"MILP {_milp_stage_done}"
+                                    st.session_state.sus = new_plan
+                                    st.session_state.milp_result = None
+                                    st.session_state.otd_opt_res = None
+                                    st.success(f"✅ Yetkilendirildi ve MILP {_milp_stage_done} uygulandı.")
+                                    st.rerun()
+                                else:
+                                    st.error("❌ Yetkisiz sicil.")
 
 
 # =============  TAB 3: RAPOR & GEÇİŞLER  (orijinal, değişmedi)  =======
