@@ -816,7 +816,7 @@ def recalc_stocks(plan):
         p["ta_rem"][c] = ta_rem
     return p
 
-def run_optimization(current_plan):
+def run_optimization_legacy_greedy(current_plan):
     """v4 Optimize: forward-looking, overstock-aware, slot2-capable, gap-aware setup.
 
     Strateji:
@@ -1040,6 +1040,31 @@ def run_optimization(current_plan):
     msg = "Plan optimize edildi!" if remaining == 0 else f"{remaining} ihlal kaldı — ek müdahale gerekli"
     return {"status": status, "proposals": proposals, "new_plan": plan,
             "remaining_violations": remaining, "suggestions": suggestions, "message": msg}
+
+# =====================================================================
+# HİBRİT OPTİMİZASYON MOTORU (Yeni — Faz 1 SCIP + Faz 2 CBC)
+# =====================================================================
+# Aşağıdaki run_optimization() fonksiyonu artık run_optimization_legacy_greedy
+# yerine HİBRİT motoru çağırır. Eski Greedy mantığı yukarıda yedek olarak
+# duruyor; opt_bridge.run_optimization hibrit çıktısını dashboard'un
+# beklediği şemaya çevirir (drop-in replacement).
+try:
+    from opt_bridge import run_optimization as _hybrid_run_optimization
+    _HYBRID_AVAILABLE = True
+except Exception as _e:
+    _HYBRID_AVAILABLE = False
+    _HYBRID_IMPORT_ERROR = str(_e)
+
+
+def run_optimization(current_plan):
+    """Drop-in replacement: hibrit motor (SCIP + CBC). Greedy fallback opsiyonel."""
+    if _HYBRID_AVAILABLE:
+        return _hybrid_run_optimization(current_plan, time_limit_sec=120)
+    # Hibrit yüklenemediyse eski Greedy'ye düş (güvenlik fallback)
+    res = run_optimization_legacy_greedy(current_plan)
+    res["message"] = (f"⚠ Hibrit motor yüklenemedi ({_HYBRID_IMPORT_ERROR[:100]}), "
+                      f"Greedy fallback kullanıldı: {res.get('message','')}")
+    return res
 
 # =====================================================================
 # YENİ — Bölüm Bazlı Yardımcı Fonksiyonlar
