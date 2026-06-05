@@ -169,6 +169,32 @@ def result_to_stock_df(result: dict, stock_key: str,
     return pd.DataFrame(rows).set_index("Kart")
 
 
+def result_to_daily_prod_df(result: dict, prod_key: str,
+                            card_list: list) -> pd.DataFrame:
+    """Günlük üretim toplamını kart × gün tablosuna çevirir."""
+    rows = []
+    for k in card_list:
+        row = {"Kart": k}
+        for t in range(T):
+            total = sum(v for key, v in result.get(prod_key, {}).items()
+                        if key.startswith(f"{k}|") and key.endswith(f"|{t}"))
+            row[GUN_ETIKETLERI[t]] = total if total > 0 else "—"
+        rows.append(row)
+    return pd.DataFrame(rows).set_index("Kart")
+
+
+def result_to_md_df(result: dict) -> pd.DataFrame:
+    """MD alokasyon tablosu."""
+    rows = []
+    for m in MD_LINES:
+        row = {"Hat": m}
+        for t in range(T):
+            key = f"{m}|{t}"
+            row[GUN_ETIKETLERI[t]] = result.get("plan_md", {}).get(key, "—")
+        rows.append(row)
+    return pd.DataFrame(rows).set_index("Hat")
+
+
 def check_negative_stocks(result: dict) -> list[str]:
     """Negatif stok uyarılarını tespit eder (olmamalı, güvenlik kontrolü)."""
     warnings = []
@@ -187,7 +213,7 @@ def check_negative_stocks(result: dict) -> list[str]:
 # ─────────────────────────────────────────────────────────────────────
 def main():
     st.title("🏭 Beko Şasi Üretim Planlama Karar Destek Sistemi")
-    st.caption("OR-Tools SCIP · CLSP-SI MILP · Leksikografik Optimizasyon")
+    st.caption("OR-Tools SCIP · CLSP-SI MILP · Deterministik OTD + Hibrit MD/TA")
 
     # ── Session State başlat ─────────────────────────────────────────
     if "opt_result" not in st.session_state:
@@ -220,6 +246,14 @@ def main():
             with st.expander("OTD Hat Alokasyonu", expanded=True):
                 st.dataframe(result_to_otd_df(res), use_container_width=True)
 
+            with st.expander("Günlük OTD Üretim (Optimize)", expanded=True):
+                st.dataframe(
+                    result_to_daily_prod_df(res, "prod_otd", KARTLAR),
+                    use_container_width=True)
+
+            with st.expander("MD Hat Alokasyonu"):
+                st.dataframe(result_to_md_df(res), use_container_width=True)
+
             with st.expander("KSO — OTD Sonrası Tampon Stok"):
                 st.dataframe(
                     result_to_stock_df(res, "stocks_kso", KARTLAR),
@@ -244,9 +278,9 @@ def main():
     with tab2:
         st.header("🚀 MILP Optimizasyonu")
         st.markdown(
-            "Leksikografik iki fazlı çözüm: "
-            "Ağırlıklı amaç fonksiyonu ile setup sayısı ve tampon stok "
-            "eş zamanlı minimize edilir (W_SETUP >> 1).")
+            "OTD üretimi **deterministik** (tam tempo veya sıfır), "
+            "MD kapasite sınırlı sürekli, TA fikstur sınırlı sürekli. "
+            "Ağırlıklı amaç fonksiyonu: setup minimize + tampon stok minimize.")
 
         col1, col2 = st.columns(2)
         with col1:
@@ -343,12 +377,26 @@ def main():
                 pd.DataFrame(setup_rows).set_index("Hat"),
                 use_container_width=True)
 
+            st.subheader("MD Setup Geçişleri")
+            md_setup_rows = []
+            for m in MD_LINES:
+                row = {"Hat": m}
+                for t in range(T):
+                    key = f"{m}|{t}"
+                    row[GUN_ETIKETLERI[t]] = (
+                        "🔄" if res.get("setups_md", {}).get(key) else "—")
+                md_setup_rows.append(row)
+            st.dataframe(
+                pd.DataFrame(md_setup_rows).set_index("Hat"),
+                use_container_width=True)
+
             # Özet metrikler
             st.subheader("Model İstatistikleri")
-            c1, c2, c3 = st.columns(3)
+            c1, c2, c3, c4 = st.columns(4)
             c1.metric("Değişken Sayısı", f"{res['num_variables']:,}")
             c2.metric("Kısıt Sayısı", f"{res['num_constraints']:,}")
-            c3.metric("Çözüm Süresi", f"{res['solve_time_sec']}s")
+            c3.metric("OTD Setup", res.get('otd_setups', '—'))
+            c4.metric("MD Setup", res.get('md_setups', '—'))
 
             # JSON export
             st.subheader("Sonuç Dışa Aktarma")
