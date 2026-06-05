@@ -1042,15 +1042,15 @@ def run_optimization_legacy_greedy(current_plan):
             "remaining_violations": remaining, "suggestions": suggestions, "message": msg}
 
 # =====================================================================
-# HİBRİT OPTİMİZASYON MOTORU (Yeni — Faz 1 SCIP + Faz 2 CBC)
+# HİBRİT OPTİMİZASYON MOTORU (Faz 1 OR-Tools/SCIP + Faz 2 PuLP/CBC)
 # =====================================================================
-# Aşağıdaki run_optimization() fonksiyonu artık run_optimization_legacy_greedy
-# yerine HİBRİT motoru çağırır. Eski Greedy mantığı yukarıda yedek olarak
-# duruyor; opt_bridge.run_optimization hibrit çıktısını dashboard'un
-# beklediği şemaya çevirir (drop-in replacement).
+# Aşağıdaki run_optimization() wrapper'ı opt_bridge.run_optimization_hybrid'i
+# çağırır. opt_bridge `import dashboard` YAPMAZ — sabitler buradan parametre
+# olarak geçilir, böylece Streamlit duplicate-id hatası oluşmaz.
 try:
-    from opt_bridge import run_optimization as _hybrid_run_optimization
+    from opt_bridge import run_optimization_hybrid as _hybrid_run
     _HYBRID_AVAILABLE = True
+    _HYBRID_IMPORT_ERROR = ""
 except Exception as _e:
     _HYBRID_AVAILABLE = False
     _HYBRID_IMPORT_ERROR = str(_e)
@@ -1059,12 +1059,26 @@ except Exception as _e:
 def run_optimization(current_plan):
     """Drop-in replacement: hibrit motor (SCIP + CBC). Greedy fallback opsiyonel."""
     if _HYBRID_AVAILABLE:
-        return _hybrid_run_optimization(current_plan, time_limit_sec=120)
-    # Hibrit yüklenemediyse eski Greedy'ye düş (güvenlik fallback)
+        return _hybrid_run(
+            current_plan=current_plan,
+            sus_cards=SUS_CARDS,
+            otd_lines=OTD_LINES,
+            tempo=TEMPO,
+            process_map=PROCESS_MAP,
+            sus_dates=SUS_DATES,
+            n_days=N_DAYS,
+            md_tempo=MD_TEMPO,
+            ta_fikstur=TA_FIKSTUR_DEFAULT,
+            ta_adet=TA_ADET_DEFAULT,
+            recalc_fn=recalc_stocks,
+            time_limit_sec=120,
+        )
+    # Fallback
     res = run_optimization_legacy_greedy(current_plan)
     res["message"] = (f"⚠ Hibrit motor yüklenemedi ({_HYBRID_IMPORT_ERROR[:100]}), "
-                      f"Greedy fallback kullanıldı: {res.get('message','')}")
+                      f"Greedy fallback: {res.get('message','')}")
     return res
+
 
 # =====================================================================
 # YENİ — Bölüm Bazlı Yardımcı Fonksiyonlar
