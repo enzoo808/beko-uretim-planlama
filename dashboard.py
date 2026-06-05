@@ -28,6 +28,206 @@ st.set_page_config(
 # =====================================================================
 YETKILI_SICILLER = {"26127996"}
 
+# =====================================================================
+# OPTIMIZASYON OVERLAY — Beko logosu pulse + yüzde ilerleme
+# =====================================================================
+# Streamlit'in default spinner'ı tabloyu şeffaflaştırır; bunun yerine
+# ekranı kaplayan, Beko-mavisi gradient'li, logosu nabız gibi atan,
+# yüzdesi otomatik ilerleyen modern bir overlay kullanıyoruz.
+#
+# Kullanım:
+#   with optimize_overlay("OTD analiz ve optimize ediliyor", est_seconds=3):
+#       run_optimization(sus)
+#
+# est_seconds: tahmini süre; yüzde bu süreye göre %90'a kadar yumuşakça
+#   ilerler, iş bitince %100'e tamamlanır ve overlay kapanır.
+#
+# Harici asset gerekmez — Beko amblemi inline SVG olarak gömülüdür.
+
+_BEKO_LOGO_SVG = """
+<svg viewBox="0 0 200 60" xmlns="http://www.w3.org/2000/svg" class="beko-logo-svg">
+  <text x="100" y="44" font-family="-apple-system,BlinkMacSystemFont,Segoe UI,sans-serif"
+        font-size="42" font-weight="800" fill="#ffffff" text-anchor="middle"
+        letter-spacing="2">Beko</text>
+</svg>
+"""
+
+class _OptimizeOverlay:
+    def __init__(self, msg: str, est_seconds: float = 3.0):
+        self.msg = msg
+        self.est_ms = max(500, int(est_seconds * 1000))
+        self._slot = None
+
+    def __enter__(self):
+        self._slot = st.empty()
+        self._slot.markdown(self._html(), unsafe_allow_html=True)
+        return self
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        if self._slot is not None:
+            self._slot.empty()
+        return False  # exception'ı yutmayalım
+
+    def _html(self) -> str:
+        import uuid
+        uid = uuid.uuid4().hex[:8]
+        return f"""
+<style>
+#beko-opt-{uid} {{
+    position: fixed; inset: 0;
+    background: radial-gradient(ellipse at 50% 40%,
+        rgba(15,40,90,0.92) 0%,
+        rgba(4,18,46,0.96) 45%,
+        rgba(2,8,24,0.98) 100%);
+    z-index: 999999;
+    display: flex; flex-direction: column;
+    align-items: center; justify-content: center;
+    backdrop-filter: blur(8px);
+    -webkit-backdrop-filter: blur(8px);
+    animation: bekoOverlayFade 0.35s ease-out;
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+}}
+@keyframes bekoOverlayFade {{
+    from {{ opacity: 0; }}
+    to   {{ opacity: 1; }}
+}}
+#beko-opt-{uid} .beko-logo-wrap {{
+    position: relative;
+    width: 140px; height: 140px;
+    display: flex; align-items: center; justify-content: center;
+    margin-bottom: 28px;
+}}
+#beko-opt-{uid} .beko-ring {{
+    position: absolute; inset: 0;
+    border-radius: 50%;
+    border: 2px solid rgba(147,197,253,0.18);
+    animation: bekoRingPulse 2.4s ease-in-out infinite;
+}}
+#beko-opt-{uid} .beko-ring.r2 {{
+    animation-delay: 0.8s;
+    inset: -12px;
+}}
+#beko-opt-{uid} .beko-ring.r3 {{
+    animation-delay: 1.6s;
+    inset: -24px;
+}}
+@keyframes bekoRingPulse {{
+    0%   {{ opacity: 0.7; transform: scale(0.92); }}
+    70%  {{ opacity: 0; transform: scale(1.25); }}
+    100% {{ opacity: 0; transform: scale(1.25); }}
+}}
+#beko-opt-{uid} .beko-logo-svg {{
+    width: 120px;
+    filter: drop-shadow(0 4px 16px rgba(59,130,246,0.55));
+    animation: bekoLogoPulse 1.6s ease-in-out infinite;
+}}
+@keyframes bekoLogoPulse {{
+    0%, 100% {{ opacity: 1; transform: scale(1); }}
+    50%      {{ opacity: 0.55; transform: scale(0.94); }}
+}}
+#beko-opt-{uid} .beko-title {{
+    color: #ffffff;
+    font-size: 19px;
+    font-weight: 600;
+    letter-spacing: 0.3px;
+    margin-bottom: 6px;
+    text-align: center;
+}}
+#beko-opt-{uid} .beko-subtitle {{
+    color: rgba(147,197,253,0.75);
+    font-size: 13px;
+    font-weight: 400;
+    margin-bottom: 28px;
+    letter-spacing: 0.4px;
+}}
+#beko-opt-{uid} .beko-bar-wrap {{
+    width: 340px;
+    height: 6px;
+    background: rgba(255,255,255,0.08);
+    border-radius: 999px;
+    overflow: hidden;
+    box-shadow: inset 0 1px 2px rgba(0,0,0,0.4);
+    position: relative;
+}}
+#beko-opt-{uid} .beko-bar {{
+    height: 100%;
+    width: 0%;
+    background: linear-gradient(90deg, #06b6d4 0%, #3b82f6 50%, #1d4ed8 100%);
+    border-radius: 999px;
+    box-shadow: 0 0 16px rgba(59,130,246,0.6);
+    animation: bekoBarFill {self.est_ms}ms cubic-bezier(0.22, 0.61, 0.36, 1) forwards;
+}}
+#beko-opt-{uid} .beko-bar::after {{
+    content: ''; position: absolute; inset: 0;
+    background: linear-gradient(90deg, transparent, rgba(255,255,255,0.35), transparent);
+    animation: bekoBarShine 1.6s linear infinite;
+}}
+@keyframes bekoBarFill {{
+    0%   {{ width: 0%; }}
+    100% {{ width: 90%; }}
+}}
+@keyframes bekoBarShine {{
+    0%   {{ transform: translateX(-100%); }}
+    100% {{ transform: translateX(100%); }}
+}}
+#beko-opt-{uid} .beko-pct {{
+    color: #ffffff;
+    font-size: 13px;
+    font-weight: 500;
+    margin-top: 12px;
+    font-variant-numeric: tabular-nums;
+    letter-spacing: 0.5px;
+    opacity: 0.85;
+}}
+#beko-opt-{uid} .beko-pct::before {{
+    content: '';
+}}
+</style>
+<div id="beko-opt-{uid}">
+    <div class="beko-logo-wrap">
+        <div class="beko-ring"></div>
+        <div class="beko-ring r2"></div>
+        <div class="beko-ring r3"></div>
+        {_BEKO_LOGO_SVG}
+    </div>
+    <div class="beko-title">Optimizasyon işlemi yapılıyor</div>
+    <div class="beko-subtitle">{self.msg}</div>
+    <div class="beko-bar-wrap"><div class="beko-bar" id="beko-bar-{uid}"></div></div>
+    <div class="beko-pct" id="beko-pct-{uid}">%0</div>
+</div>
+<script>
+(function() {{
+    const bar = document.getElementById('beko-bar-{uid}');
+    const pct = document.getElementById('beko-pct-{uid}');
+    if (!bar || !pct) return;
+    const start = performance.now();
+    const dur = {self.est_ms};
+    function tick(now) {{
+        const t = Math.min(1, (now - start) / dur);
+        // CSS animation 0->90, JS yazıyı senkronize ediyor
+        const p = Math.floor(t * 90);
+        pct.textContent = '%' + p;
+        if (t < 1) requestAnimationFrame(tick);
+        else {{
+            // 90%'da takılı kal — iş bittiğinde DOM zaten kaldırılacak
+            pct.textContent = '%90';
+        }}
+    }}
+    requestAnimationFrame(tick);
+}})();
+</script>
+"""
+
+def optimize_overlay(msg: str, est_seconds: float = 3.0):
+    """Streamlit st.spinner yerine kullanılacak Beko-temalı overlay.
+
+    Örnek:
+        with optimize_overlay("OTD analiz ediliyor", est_seconds=4):
+            sonuc = run_optimization(...)
+    """
+    return _OptimizeOverlay(msg, est_seconds)
+
+
 KART_RENKLERI = {
     "F4":"#FFB3BA","GB":"#A8E6CF","GL":"#B3D4FF","GX":"#FFFACD","LG":"#D9B3FF",
     "MR":"#FFCBA4","V1":"#B5EAD7","XC":"#C3B1E1","XD":"#FFE0B2","XGB":"#81D4FA",
@@ -2181,7 +2381,7 @@ with tab_panel:
     tb1, tb2 = st.columns([2, 8])
     with tb1:
         if st.button("🚀  Tümünü Optimize Et", type="primary", use_container_width=True, key="tum_opt_btn"):
-            with st.spinner("Tüm aşamalar analiz ediliyor ve optimize ediliyor…"):
+            with optimize_overlay("Tüm aşamalar analiz ediliyor ve optimize ediliyor", est_seconds=6):
                 _res = run_optimization(sus)
                 if _res["proposals"]:
                     st.session_state.tumopt_pending = _res
@@ -2435,7 +2635,7 @@ with tab_panel:
         with hc4:
             if st.button("⚡  OTD'yi Optimize Et", type="primary",
                          use_container_width=True, key="btn_otd_exp"):
-                with st.spinner("OTD analiz ve optimize ediliyor…"):
+                with optimize_overlay("OTD analiz ve optimize ediliyor", est_seconds=4):
                     st.session_state.otd_opt_res = run_stage_opt(sus, "OTD")
                 st.rerun()
 
@@ -2470,7 +2670,7 @@ with tab_panel:
                 with st.expander("🤖 Optimize Önerisi (hangi kart nereye atanmalı?)", expanded=False):
                     st.caption("Hibrit motoru çalıştırıp OTD için kart atama önerilerini görmek için aşağıdaki butona basın (60-120 saniye sürer).")
                     if st.button("🔄 OTD önerilerini hesapla", key="btn_ref_otd_compute"):
-                        with st.spinner("Hibrit motor çalışıyor (Faz 1 SCIP + Faz 2 CBC)..."):
+                        with optimize_overlay("Hibrit motor çalışıyor — Faz 1: SCIP · Faz 2: CBC", est_seconds=8):
                             st.session_state["_otd_ref_cache"] = run_stage_opt(sus, "OTD")
                     _opt_ref = st.session_state.get("_otd_ref_cache")
                     if _opt_ref is None:
@@ -2860,7 +3060,7 @@ with tab_panel:
         with hc4:
             if st.button("✋  MD'yi Optimize Et", type="primary",
                          use_container_width=True, key="btn_md_exp"):
-                with st.spinner("MD analiz ve optimize ediliyor…"):
+                with optimize_overlay("MD analiz ve optimize ediliyor", est_seconds=3):
                     st.session_state.md_opt_res = run_stage_opt(sus, "MD")
                 st.rerun()
 
@@ -3223,7 +3423,7 @@ with tab_panel:
         with hc4:
             if st.button("🔬  TA'yı Optimize Et", type="primary",
                          use_container_width=True, key="btn_ta_exp"):
-                with st.spinner("TA analiz ediliyor…"):
+                with optimize_overlay("TA fikstür kapasitesi analiz ediliyor", est_seconds=3):
                     st.session_state.ta_opt_res = run_stage_opt(sus, "TA")
                 st.rerun()
 
@@ -3652,7 +3852,7 @@ with tab_opt:
         st.write("---")
 
         if st.button("🚀 OPTİMİZE ET — Planı Analiz Et ve Düzelt", type="primary", use_container_width=True):
-            with st.spinner("Plan analiz ediliyor ve optimizasyon çalıştırılıyor..."):
+            with optimize_overlay("Plan analiz ediliyor ve düzeltmeler hesaplanıyor", est_seconds=5):
                 result = run_optimization(sus)
                 st.session_state.opt_result = result
 
@@ -3767,7 +3967,7 @@ with tab_opt:
                                            "AÇIK = gün-içi 2 kart (setup ile, yarım üretim) — sadece zorunlu hallerde.")
 
             if st.button("🧮 MILP Çöz", type="primary", use_container_width=True, key="btn_milp_solve"):
-                with st.spinner(f"{_milp_stage} MILP çözülüyor… (CBC, max {_milp_tlim} sn)"):
+                with optimize_overlay(f"{_milp_stage} MILP çözülüyor (CBC, max {_milp_tlim} sn)", est_seconds=float(_milp_tlim)):
                     if _milp_stage == "OTD":
                         res = solve_otd_milp(sus, time_limit=_milp_tlim, mip_gap=_milp_gap,
                                              allow_two_cards_per_day=_milp_two)
