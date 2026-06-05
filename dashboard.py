@@ -2466,10 +2466,16 @@ with tab_panel:
                     <span style="color:#cbd5e1;font-size:0.82rem;">Tablodaki hücrelere tıklayarak kart ataması yapın. Setup değişiklikleri otomatik algılanır ve oran önerilir.</span>
                 </div>""", unsafe_allow_html=True)
 
-                # ═══ v3.4: Optimize Önerisi — referans tablo ═══
+                # ═══ v3.4: Optimize Önerisi — referans tablo (lazy load) ═══
                 with st.expander("🤖 Optimize Önerisi (hangi kart nereye atanmalı?)", expanded=False):
-                    _opt_ref = run_stage_opt(sus, "OTD")
-                    if _opt_ref["proposals"]:
+                    st.caption("Hibrit motoru çalıştırıp OTD için kart atama önerilerini görmek için aşağıdaki butona basın (60-120 saniye sürer).")
+                    if st.button("🔄 OTD önerilerini hesapla", key="btn_ref_otd_compute"):
+                        with st.spinner("Hibrit motor çalışıyor (Faz 1 SCIP + Faz 2 CBC)..."):
+                            st.session_state["_otd_ref_cache"] = run_stage_opt(sus, "OTD")
+                    _opt_ref = st.session_state.get("_otd_ref_cache")
+                    if _opt_ref is None:
+                        st.info("ℹ️ Henüz hesaplama yapılmadı. Yukarıdaki butona basın.")
+                    elif _opt_ref.get("proposals"):
                         st.caption("Optimizer'ın önerdiği değişiklikler — editörde referans olarak kullanabilirsiniz:")
                         for p in _opt_ref["proposals"]:
                             st.markdown(
