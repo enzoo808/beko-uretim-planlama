@@ -11,7 +11,9 @@ import streamlit as st
 import pandas as pd
 import json
 from datetime import date
-from optimizer import solve as run_optimizer
+from hybrid_solver import solve as run_optimizer
+# Not: hybrid_solver, Faz 1'i OR-Tools/SCIP (atama+setup), Faz 2'yi
+# PuLP+CBC (buffer minimize) ile çalıştırır. Arayüz optimizer.solve ile aynı.
 
 # ─────────────────────────────────────────────────────────────────────
 #  SAYFA AYARLARI
@@ -288,8 +290,8 @@ def main():
                 "Çözücü Zaman Limiti (saniye)",
                 min_value=10, max_value=600, value=60, step=10)
         with col2:
-            st.metric("Çözücü", "SCIP (OR-Tools)")
-            st.metric("Model Tipi", "MILP / CLSP-SI")
+            st.metric("Çözücü", "Hibrit: SCIP + CBC")
+            st.metric("Model Tipi", "Faz1 MILP / Faz2 LP")
 
         if st.button("🔄 Optimizasyonu Başlat", type="primary",
                       use_container_width=True):
