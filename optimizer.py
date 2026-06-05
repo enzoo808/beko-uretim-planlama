@@ -1,18 +1,21 @@
 """
-optimizer.py — Beko TV Anakart Üretim Planlama MILP Modeli
-===========================================================
+optimizer.py — Beko TV Anakart Üretim Planlama MILP Modeli (v4)
+================================================================
 Çözücü  : Google OR-Tools (pywraplp) + SCIP
-Yapı    : CLSP-SI (Capacitated Lot Sizing Problem – Setup & Inventory)
-Amaç    : Ağırlıklı tek-fazlı optimizasyon (hierarchical weights)
-            min  W_SETUP × Σ zO  +  1 × Σ (KSO + KSM + KST)
-          W_SETUP yeterince büyük seçilerek leksikografik etki sağlanır:
-          model önce setup'ı minimize eder, sonra eşit setup içinde
-          tampon stoğu minimize eder.
+Yapı    : CLSP-SI — Hibrit Üretim Miktarları
 
-Mimari  : Hiçbir Streamlit (st) bağımlılığı YOKTUR.
-          Parametreleri dict olarak alır, sonucu dict olarak döner.
+OTD AŞAMASI → DETERMİNİSTİK (tam tempo veya sıfır)
+  pO = tempo × yO × (1 - S_OTD × setup)
+  Çözücü 662, 199 gibi küsuratlı değer üretemez.
 
-Yazar   : Mehmet Ensar & Ege — YTÜ Endüstri Mühendisliği Bitirme Projesi
+MD AŞAMASI  → KAPASİTE SINIRLI SÜREKLİ (MD tempo ≤ üst sınır)
+  MD'de hat ataması ikili (yM), üretim ≤ tempo × yM × verim.
+  Neden sürekli: MD temposu > OTD temposu olan kartlarda (GB, GL, MR)
+  deterministik MD, KSO'yu negatife düşürür.
+
+TA AŞAMASI  → SÜREKLİ (fikstur bazlı, ≤ ta_cap)
+
+Yazar   : Mehmet Ensar & Ege — YTÜ Endüstri Müh. Bitirme Projesi
 Danışman: Prof. Dr. Nihan Çetin Demirel
 """
 
@@ -20,43 +23,17 @@ from __future__ import annotations
 from ortools.linear_solver import pywraplp
 from typing import Any
 
+# ─────────────────────────────────────────────────────────────────────
+S_OTD      = 0.50        # OTD setup kaybı (%50)
+S_MD       = 0.05        # MD  setup kaybı (%5)
+W_SETUP    = 100_000     # Setup ağırlığı
+W_IDLE     = 10          # Boş OTD hat cezası
+SOLVER_ID  = "SCIP"
 
-# ─────────────────────────────────────────────────────────────────────
-#  SABİTLER
-# ─────────────────────────────────────────────────────────────────────
-SETUP_LOSS    = 0.50       # Kart değişimi → günlük kapasitenin %50'si kayıp
-W_SETUP       = 100_000    # Setup ağırlığı — buffer toplamından >> büyük
-SOLVER_ID     = "SCIP"     # OR-Tools MIP back-end
 
-
-# ─────────────────────────────────────────────────────────────────────
-#  ANA ÇÖZÜM FONKSİYONU
-# ─────────────────────────────────────────────────────────────────────
 def solve(data: dict[str, Any],
           time_limit_sec: int = 120) -> dict[str, Any]:
-    """
-    Parametreler
-    ------------
-    data : dict — Aşağıdaki anahtarları içermeli:
-        kartlar, kartlar_md, kartlar_skip : list[str]
-        otd_lines, md_lines              : list[str]
-        T                                : int
-        tempo_otd  : dict[(k,l), float]
-        tempo_md   : dict[(k,m), float]
-        ta_cap     : dict[(k,t), float]
-        demand     : dict[(k,t), float]
-        init_kso, init_ksm, init_kst : dict[k, float]
 
-    time_limit_sec : int — Çözücü zaman limiti (saniye)
-
-    Dönüş
-    ------
-    dict — status, total_setups, total_buffer, plan_otd, prod_otd,
-           prod_md, prod_ta, setups, stocks_kso, stocks_ksm, stocks_kst,
-           solve_time_sec, num_variables, num_constraints
-    """
-
-    # ── Veri çözümleme ──────────────────────────────────────────────
     K       = data["kartlar"]
     K_MD    = data["kartlar_md"]
     K_SKIP  = data["kartlar_skip"]
@@ -73,51 +50,47 @@ def solve(data: dict[str, Any],
     init_ksm  = data["init_ksm"]
     init_kst  = data["init_kst"]
 
-    # Her OTD hattının günlük maksimum kapasitesi (en yüksek tempo)
-    max_cap = {}
-    for l in L_OTD:
-        caps = [tempo_otd.get((k, l), 0) for k in K]
-        max_cap[l] = max(caps) if caps else 0
-
-    # ═════════════════════════════════════════════════════════════════
-    #  MODEL OLUŞTUR
-    # ═════════════════════════════════════════════════════════════════
     solver = pywraplp.Solver.CreateSolver(SOLVER_ID)
     if not solver:
-        return {"status": "ERROR",
-                "message": f"{SOLVER_ID} çözücüsü bulunamadı. "
-                           f"'pip install ortools' komutunu çalıştırın."}
-
+        return {"status": "ERROR", "message": "SCIP yüklenemedi."}
     solver.SetTimeLimit(time_limit_sec * 1000)
-    infinity = solver.infinity()
+    inf = solver.infinity()
 
-    # ── KARAR DEĞİŞKENLERİ ─────────────────────────────────────────
-
-    # yO[k,l,t] ∈ {0,1} — Kart k, OTD hattı l, gün t'de üretiliyor mu?
-    yO = {}
+    # =================================================================
+    #  OTD DEĞİŞKENLERİ — DETERMİNİSTİK
+    # =================================================================
+    yO = {}   # yO[k,l,t] ∈ {0,1}
     for k in K:
         for l in L_OTD:
             for t in days:
                 if tempo_otd.get((k, l), 0) > 0:
                     yO[k, l, t] = solver.BoolVar(f"yO_{k}_{l}_{t}")
 
-    # zO[l,t] ∈ {0,1} — OTD hattı l'de gün t'de setup var mı?
-    zO = {}
+    zO = {}   # zO[l,t] ∈ {0,1} — OTD setup
     for l in L_OTD:
         for t in days:
             zO[l, t] = solver.BoolVar(f"zO_{l}_{t}")
 
-    # pO[k,l,t] ≥ 0 — OTD üretim miktarı (adet)
-    pO = {}
-    for k in K:
-        for l in L_OTD:
-            for t in days:
-                cap = tempo_otd.get((k, l), 0)
-                if cap > 0:
-                    pO[k, l, t] = solver.NumVar(0, cap, f"pO_{k}_{l}_{t}")
+    wO = {}   # wO[k,l,t] = yO ∧ zO  (McCormick lineerleştirme)
+    for (k, l, t) in yO:
+        wO[k, l, t] = solver.BoolVar(f"wO_{k}_{l}_{t}")
 
-    # pM[k,m,t] ≥ 0 — MD üretim miktarı (sadece K_MD kartları)
-    pM = {}
+    # =================================================================
+    #  MD DEĞİŞKENLERİ — ATAMA İKİLİ, ÜRETİM SÜREKLİ
+    # =================================================================
+    yM = {}   # yM[k,m,t] ∈ {0,1}
+    for k in K_MD:
+        for m in L_MD:
+            for t in days:
+                if tempo_md.get((k, m), 0) > 0:
+                    yM[k, m, t] = solver.BoolVar(f"yM_{k}_{m}_{t}")
+
+    zM = {}   # zM[m,t] ∈ {0,1} — MD setup
+    for m in L_MD:
+        for t in days:
+            zM[m, t] = solver.BoolVar(f"zM_{m}_{t}")
+
+    pM = {}   # pM[k,m,t] ≥ 0 — MD üretim (sürekli, ≤ tempo × yM)
     for k in K_MD:
         for m in L_MD:
             for t in days:
@@ -125,50 +98,30 @@ def solve(data: dict[str, Any],
                 if cap > 0:
                     pM[k, m, t] = solver.NumVar(0, cap, f"pM_{k}_{m}_{t}")
 
-    # pT[k,t] ≥ 0 — TA üretim miktarı
-    pT = {}
-    for k in K:
-        for t in days:
-            cap = ta_cap.get((k, t), 0)
-            pT[k, t] = solver.NumVar(0, cap, f"pT_{k}_{t}")
+    # =================================================================
+    #  TA ve STOK DEĞİŞKENLERİ
+    # =================================================================
+    pT  = {(k, t): solver.NumVar(0, ta_cap.get((k, t), 0), f"pT_{k}_{t}")
+           for k in K for t in days}
+    KSO = {(k, t): solver.NumVar(0, inf, f"KSO_{k}_{t}")
+           for k in K for t in days}
+    KSM = {(k, t): solver.NumVar(0, inf, f"KSM_{k}_{t}")
+           for k in K_MD for t in days}
+    KST = {(k, t): solver.NumVar(0, inf, f"KST_{k}_{t}")
+           for k in K for t in days}
 
-    # KSO[k,t] ≥ 0 — OTD → sonraki aşama tampon stoku
-    KSO = {}
-    for k in K:
-        for t in days:
-            KSO[k, t] = solver.NumVar(0, infinity, f"KSO_{k}_{t}")
+    # =================================================================
+    #  OTD KISITLARI
+    # =================================================================
 
-    # KSM[k,t] ≥ 0 — MD → TA tampon stoku (sadece K_MD kartları)
-    KSM = {}
-    for k in K_MD:
-        for t in days:
-            KSM[k, t] = solver.NumVar(0, infinity, f"KSM_{k}_{t}")
-
-    # KST[k,t] ≥ 0 — TA → Montaj tampon stoku
-    KST = {}
-    for k in K:
-        for t in days:
-            KST[k, t] = solver.NumVar(0, infinity, f"KST_{k}_{t}")
-
-    # ── KISITLAR ────────────────────────────────────────────────────
-
-    # (1) Bir OTD hattında günde en fazla bir kart tipi üretilebilir.
-    #     Σ_k yO[k,l,t] ≤ 1    ∀ l ∈ L_OTD, t ∈ T
+    # (C1) Bir hatta günde ≤ 1 kart
     for l in L_OTD:
         for t in days:
-            cards_on_line = [yO[k, l, t] for k in K
-                            if (k, l, t) in yO]
-            if cards_on_line:
-                solver.Add(sum(cards_on_line) <= 1)
+            c = [yO[k, l, t] for k in K if (k, l, t) in yO]
+            if c:
+                solver.Add(sum(c) <= 1)
 
-    # (2) OTD üretim kapasitesi — alokasyona bağlı.
-    #     pO[k,l,t] ≤ tempo[k,l] × yO[k,l,t]    ∀ k,l,t
-    for (k, l, t), var in pO.items():
-        solver.Add(var <= tempo_otd[(k, l)] * yO[k, l, t])
-
-    # (3) Setup tespiti — kart değişimi zO'yu tetikler.
-    #     t=0: zO[l,0] ≥ yO[k,l,0]            (ilk gün, her atama = setup)
-    #     t>0: zO[l,t] ≥ yO[k,l,t] - yO[k,l,t-1]
+    # (C2) OTD setup tespiti
     for l in L_OTD:
         for t in days:
             if t == 0:
@@ -182,212 +135,218 @@ def solve(data: dict[str, Any],
                         if prev is not None:
                             solver.Add(zO[l, t] >= yO[k, l, t] - prev)
                         else:
-                            # Kart dün bu hatta atanamaz → bugün atanırsa setup
                             solver.Add(zO[l, t] >= yO[k, l, t])
 
-    # (4) Setup kaybı — setup olan günde hat kapasitesi %50 azalır.
-    #     Σ_k pO[k,l,t] ≤ max_cap[l] × (1 - S × zO[l,t])    ∀ l,t
-    for l in L_OTD:
-        for t in days:
-            prod_on_line = [pO[k, l, t] for k in K
-                           if (k, l, t) in pO]
-            if prod_on_line:
-                solver.Add(
-                    sum(prod_on_line)
-                    <= max_cap[l] * (1 - SETUP_LOSS * zO[l, t]))
+    # (C3) wO = yO ∧ zO  (McCormick)
+    for (k, l, t) in wO:
+        solver.Add(wO[k, l, t] <= yO[k, l, t])
+        solver.Add(wO[k, l, t] <= zO[l, t])
+        solver.Add(wO[k, l, t] >= yO[k, l, t] + zO[l, t] - 1)
 
-    # (5) MD hat kapasitesi — her hatta günlük üst sınır.
-    #     Σ_k pM[k,m,t] ≤ max_tempo_md[m]    ∀ m,t
+    # =================================================================
+    #  MD KISITLARI
+    # =================================================================
+
+    # (C4) Bir MD hattında günde ≤ 1 kart
     for m in L_MD:
         for t in days:
-            prod_md = [pM[k, m, t] for k in K_MD if (k, m, t) in pM]
-            if prod_md:
+            c = [yM[k, m, t] for k in K_MD if (k, m, t) in yM]
+            if c:
+                solver.Add(sum(c) <= 1)
+
+    # (C5) MD setup tespiti
+    for m in L_MD:
+        for t in days:
+            if t == 0:
+                for k in K_MD:
+                    if (k, m, 0) in yM:
+                        solver.Add(zM[m, 0] >= yM[k, m, 0])
+            else:
+                for k in K_MD:
+                    if (k, m, t) in yM:
+                        prev = yM.get((k, m, t - 1))
+                        if prev is not None:
+                            solver.Add(zM[m, t] >= yM[k, m, t] - prev)
+                        else:
+                            solver.Add(zM[m, t] >= yM[k, m, t])
+
+    # (C6) MD üretim ≤ tempo × yM  (atanmadıysa üretim = 0)
+    for (k, m, t), var in pM.items():
+        solver.Add(var <= tempo_md[(k, m)] * yM[k, m, t])
+
+    # (C7) MD setup kaybı — Σ pM ≤ max_md × (1 - S_MD × zM)
+    for m in L_MD:
+        for t in days:
+            prods = [pM[k, m, t] for k in K_MD if (k, m, t) in pM]
+            if prods:
                 max_md = max(tempo_md.get((kk, m), 0) for kk in K_MD)
-                solver.Add(sum(prod_md) <= max_md)
+                solver.Add(sum(prods) <= max_md * (1 - S_MD * zM[m, t]))
 
-    # (6) TA kapasite → değişken üst sınırında (pT tanımında)
+    # =================================================================
+    #  DETERMİNİSTİK OTD ÜRETİM İFADESİ
+    # =================================================================
+    # pO[k,l,t] = tempo × yO - tempo × S_OTD × wO
+    # Bu bir karar değişkeni DEĞİL, bir ifadedir (expression).
+    # yO=1, zO=0 → tam tempo.  yO=1, zO=1 → yarım tempo.
 
-    # (7) Tampon stok denge — KSO
-    #     K_MD kartları : KSO[k,t] = KSO[k,t-1] + Σ_l pO[k,l,t] - Σ_m pM[k,m,t]
-    #     K_SKIP kartları: KSO[k,t] = KSO[k,t-1] + Σ_l pO[k,l,t] - pT[k,t]
+    def otd_prod(k, t):
+        """Kart k'nın gün t'deki toplam OTD üretimi."""
+        terms = []
+        for l in L_OTD:
+            if (k, l, t) in yO:
+                tp = tempo_otd[(k, l)]
+                terms.append(tp * yO[k, l, t] - tp * S_OTD * wO[k, l, t])
+        return sum(terms) if terms else 0
+
+    def md_prod(k, t):
+        """Kart k'nın gün t'deki toplam MD üretimi (sürekli)."""
+        return sum(pM[k, m, t] for m in L_MD if (k, m, t) in pM)
+
+    # =================================================================
+    #  STOK DENGE DENKLEMLERİ
+    # =================================================================
+
+    # (C8) KSO: K_MD → OTD çıkış - MD giriş.  K_SKIP → OTD çıkış - TA giriş.
     for k in K:
         for t in days:
-            otd_prod = sum(pO[k, l, t] for l in L_OTD
-                          if (k, l, t) in pO)
-            prev_kso = KSO[k, t - 1] if t > 0 else init_kso.get(k, 0)
-
+            prev = KSO[k, t-1] if t > 0 else init_kso.get(k, 0)
+            otd = otd_prod(k, t)
             if k in K_MD:
-                md_cons = sum(pM[k, m, t] for m in L_MD
-                              if (k, m, t) in pM)
-                solver.Add(KSO[k, t] == prev_kso + otd_prod - md_cons)
+                solver.Add(KSO[k, t] == prev + otd - md_prod(k, t))
             else:
-                solver.Add(KSO[k, t] == prev_kso + otd_prod - pT[k, t])
+                solver.Add(KSO[k, t] == prev + otd - pT[k, t])
 
-    # (8) Tampon stok denge — KSM (sadece K_MD)
-    #     KSM[k,t] = KSM[k,t-1] + Σ_m pM[k,m,t] - pT[k,t]
+    # (C9) KSM: MD çıkış - TA giriş (sadece K_MD)
     for k in K_MD:
         for t in days:
-            md_prod = sum(pM[k, m, t] for m in L_MD
-                         if (k, m, t) in pM)
-            prev_ksm = KSM[k, t - 1] if t > 0 else init_ksm.get(k, 0)
-            solver.Add(KSM[k, t] == prev_ksm + md_prod - pT[k, t])
+            prev = KSM[k, t-1] if t > 0 else init_ksm.get(k, 0)
+            solver.Add(KSM[k, t] == prev + md_prod(k, t) - pT[k, t])
 
-    # (9) Tampon stok denge — KST
-    #     KST[k,t] = KST[k,t-1] + pT[k,t] - demand[k,t]
+    # (C10) KST: TA çıkış - Montaj talebi
     for k in K:
         for t in days:
-            prev_kst = KST[k, t - 1] if t > 0 else init_kst.get(k, 0)
-            solver.Add(KST[k, t] == prev_kst + pT[k, t]
+            prev = KST[k, t-1] if t > 0 else init_kst.get(k, 0)
+            solver.Add(KST[k, t] == prev + pT[k, t]
                        - demand.get((k, t), 0))
 
-    # ── AMAÇ FONKSİYONU ────────────────────────────────────────────
-    # Ağırlıklı tek-fazlı: W_SETUP × Σ zO  +  Σ (KSO + KSM + KST)
-    # W_SETUP >> buffer toplamı olduğundan leksikografik etki sağlanır.
-    total_setups_expr = sum(zO[l, t] for l in L_OTD for t in days)
-    total_buffer_expr = (
-        sum(KSO[k, t] for k in K for t in days)
-        + sum(KSM[k, t] for k in K_MD for t in days)
-        + sum(KST[k, t] for k in K for t in days)
+    # =================================================================
+    #  AMAÇ FONKSİYONU
+    # =================================================================
+    total_otd_z = sum(zO[l, t] for l in L_OTD for t in days)
+    total_md_z  = sum(zM[m, t] for m in L_MD  for t in days)
+
+    idle = 0
+    for l in L_OTD:
+        for t in days:
+            c = [yO[k, l, t] for k in K if (k, l, t) in yO]
+            if c:
+                idle += (1 - sum(c))
+
+    buf = (sum(KSO[k, t] for k in K for t in days)
+           + sum(KSM[k, t] for k in K_MD for t in days)
+           + sum(KST[k, t] for k in K for t in days))
+
+    solver.Minimize(
+        W_SETUP * (total_otd_z + total_md_z)
+        + W_IDLE * idle
+        + buf
     )
 
-    solver.Minimize(W_SETUP * total_setups_expr + total_buffer_expr)
-
-    # ── ÇÖZ ────────────────────────────────────────────────────────
+    # =================================================================
+    #  ÇÖZ
+    # =================================================================
     status = solver.Solve()
+    if status not in (pywraplp.Solver.OPTIMAL, pywraplp.Solver.FEASIBLE):
+        return {"status": "INFEASIBLE",
+                "message": "Fizibil çözüm bulunamadı."}
 
-    if status not in (pywraplp.Solver.OPTIMAL,
-                      pywraplp.Solver.FEASIBLE):
-        return {
-            "status": "INFEASIBLE",
-            "message": (
-                "Fizibil çözüm bulunamadı. Olası nedenler:\n"
-                "• Yetersiz OTD kapasitesi (tempo → hat uyumsuzluğu)\n"
-                "• TA fikstur darboğazı (MR: 100/gün dikkat)\n"
-                "• Toplam montaj talebi mevcut kapasiteyi aşıyor\n"
-                "• Başlangıç stokları yetersiz (KST < ilk günlerin talebi)"
-            ),
-        }
+    smap = {pywraplp.Solver.OPTIMAL: "OPTIMAL",
+            pywraplp.Solver.FEASIBLE: "FEASIBLE"}
 
-    # ═════════════════════════════════════════════════════════════════
-    #  SONUÇLARI TOPLA
-    # ═════════════════════════════════════════════════════════════════
-    status_map = {
-        pywraplp.Solver.OPTIMAL: "OPTIMAL",
-        pywraplp.Solver.FEASIBLE: "FEASIBLE",
-    }
-
-    # OTD Alokasyon planı
+    # ── Sonuç çıkarma ───────────────────────────────────────────────
     plan_otd = {}
     for l in L_OTD:
         for t in days:
-            assigned = None
+            a = None
             for k in K:
                 if (k, l, t) in yO and yO[k, l, t].solution_value() > 0.5:
-                    assigned = k
-                    break
-            plan_otd[(l, t)] = assigned
+                    a = k; break
+            plan_otd[(l, t)] = a
 
-    # OTD Üretim
-    prod_otd = {}
-    for (k, l, t), var in pO.items():
-        val = var.solution_value()
-        if val > 0.5:
-            prod_otd[(k, l, t)] = round(val)
+    # OTD üretim: deterministik
+    r_prod_otd = {}
+    for k in K:
+        for l in L_OTD:
+            for t in days:
+                if (k, l, t) in yO and yO[k, l, t].solution_value() > 0.5:
+                    tp = tempo_otd[(k, l)]
+                    setup = wO[k, l, t].solution_value() > 0.5
+                    prod = round(tp * (1 - S_OTD) if setup else tp)
+                    if prod > 0:
+                        r_prod_otd[(k, l, t)] = prod
 
-    # MD Üretim
-    prod_md = {}
+    # MD
+    plan_md = {}
+    for m in L_MD:
+        for t in days:
+            a = None
+            for k in K_MD:
+                if (k, m, t) in yM and yM[k, m, t].solution_value() > 0.5:
+                    a = k; break
+            plan_md[(m, t)] = a
+
+    r_prod_md = {}
     for (k, m, t), var in pM.items():
-        val = var.solution_value()
-        if val > 0.5:
-            prod_md[(k, m, t)] = round(val)
+        v = var.solution_value()
+        if v > 0.5:
+            r_prod_md[(k, m, t)] = round(v)
 
-    # TA Üretim
-    prod_ta = {}
+    # TA
+    r_prod_ta = {}
     for (k, t), var in pT.items():
-        val = var.solution_value()
-        if val > 0.5:
-            prod_ta[(k, t)] = round(val)
+        v = var.solution_value()
+        if v > 0.5:
+            r_prod_ta[(k, t)] = round(v)
 
-    # Setup günleri
-    setups = {}
-    for (l, t), var in zO.items():
-        if var.solution_value() > 0.5:
-            setups[(l, t)] = True
+    s_otd = {(l,t) for (l,t),v in zO.items() if v.solution_value() > 0.5}
+    s_md  = {(m,t) for (m,t),v in zM.items() if v.solution_value() > 0.5}
 
-    # Tampon stoklar
-    stocks_kso = {(k, t): round(KSO[k, t].solution_value())
-                  for k in K for t in days}
-    stocks_ksm = {(k, t): round(KSM[k, t].solution_value())
-                  for k in K_MD for t in days}
-    stocks_kst = {(k, t): round(KST[k, t].solution_value())
-                  for k in K for t in days}
-
-    # Özet metrikler
-    total_setups = sum(1 for v in zO.values()
-                       if v.solution_value() > 0.5)
-    total_buffer = round(total_buffer_expr.solution_value()
-                         if hasattr(total_buffer_expr, 'solution_value')
-                         else sum(stocks_kso.values())
-                              + sum(stocks_ksm.values())
-                              + sum(stocks_kst.values()))
+    sk_kso = {(k,t): round(KSO[k,t].solution_value()) for k in K for t in days}
+    sk_ksm = {(k,t): round(KSM[k,t].solution_value()) for k in K_MD for t in days}
+    sk_kst = {(k,t): round(KST[k,t].solution_value()) for k in K for t in days}
 
     return {
-        "status": status_map.get(status, "UNKNOWN"),
-        "total_setups": total_setups,
-        "total_buffer": total_buffer,
-        "plan_otd": {f"{l}|{t}": v for (l, t), v in plan_otd.items()},
-        "prod_otd": {f"{k}|{l}|{t}": v
-                     for (k, l, t), v in prod_otd.items()},
-        "prod_md":  {f"{k}|{m}|{t}": v
-                     for (k, m, t), v in prod_md.items()},
-        "prod_ta":  {f"{k}|{t}": v for (k, t), v in prod_ta.items()},
-        "setups":   {f"{l}|{t}": True for (l, t) in setups},
-        "stocks_kso": {f"{k}|{t}": v
-                       for (k, t), v in stocks_kso.items()},
-        "stocks_ksm": {f"{k}|{t}": v
-                       for (k, t), v in stocks_ksm.items()},
-        "stocks_kst": {f"{k}|{t}": v
-                       for (k, t), v in stocks_kst.items()},
-        "solve_time_sec": round(solver.wall_time() / 1000, 2),
+        "status": smap.get(status, "UNKNOWN"),
+        "total_setups": len(s_otd) + len(s_md),
+        "otd_setups": len(s_otd), "md_setups": len(s_md),
+        "total_buffer": sum(sk_kso.values())+sum(sk_ksm.values())+sum(sk_kst.values()),
+        "plan_otd":   {f"{l}|{t}": v for (l,t),v in plan_otd.items()},
+        "plan_md":    {f"{m}|{t}": v for (m,t),v in plan_md.items()},
+        "prod_otd":   {f"{k}|{l}|{t}": v for (k,l,t),v in r_prod_otd.items()},
+        "prod_md":    {f"{k}|{m}|{t}": v for (k,m,t),v in r_prod_md.items()},
+        "prod_ta":    {f"{k}|{t}": v for (k,t),v in r_prod_ta.items()},
+        "setups":     {f"{l}|{t}": True for l,t in s_otd},
+        "setups_md":  {f"{m}|{t}": True for m,t in s_md},
+        "stocks_kso": {f"{k}|{t}": v for (k,t),v in sk_kso.items()},
+        "stocks_ksm": {f"{k}|{t}": v for (k,t),v in sk_ksm.items()},
+        "stocks_kst": {f"{k}|{t}": v for (k,t),v in sk_kst.items()},
+        "solve_time_sec": round(solver.wall_time()/1000, 2),
         "num_variables": solver.NumVariables(),
         "num_constraints": solver.NumConstraints(),
         "objective_value": round(solver.Objective().Value()),
-        "w_setup": W_SETUP,
     }
 
-
-# ─────────────────────────────────────────────────────────────────────
-#  MODÜL TESTİ
-# ─────────────────────────────────────────────────────────────────────
 if __name__ == "__main__":
-    # Minimal test verisi (2 kart, 2 hat, 3 gün)
-    test_data = {
-        "kartlar":      ["XC", "XR"],
-        "kartlar_md":   [],
-        "kartlar_skip": ["XC", "XR"],
-        "otd_lines":    ["OD0", "OD2"],
-        "md_lines":     ["MD1", "MD2"],
-        "T": 3,
-        "tempo_otd": {
-            ("XC", "OD0"): 1000, ("XR", "OD0"): 900,
-            ("XC", "OD2"): 1000, ("XR", "OD2"): 900,
-        },
+    td = {
+        "kartlar": ["XC","XR"], "kartlar_md": [], "kartlar_skip": ["XC","XR"],
+        "otd_lines": ["OD0","OD2"], "md_lines": ["MD1","MD2"], "T": 3,
+        "tempo_otd": {("XC","OD0"):1000, ("XR","OD0"):900,
+                      ("XC","OD2"):1000, ("XR","OD2"):900},
         "tempo_md": {},
-        "ta_cap": {
-            ("XC", 0): 800, ("XC", 1): 800, ("XC", 2): 800,
-            ("XR", 0): 700, ("XR", 1): 700, ("XR", 2): 700,
-        },
-        "demand": {
-            ("XC", 0): 400, ("XC", 1): 400, ("XC", 2): 400,
-            ("XR", 0): 300, ("XR", 1): 300, ("XR", 2): 300,
-        },
-        "init_kso": {"XC": 500, "XR": 400},
-        "init_ksm": {},
-        "init_kst": {"XC": 200, "XR": 150},
+        "ta_cap": {("XC",t):800 for t in range(3)} | {("XR",t):700 for t in range(3)},
+        "demand": {("XC",t):400 for t in range(3)} | {("XR",t):300 for t in range(3)},
+        "init_kso": {"XC":500,"XR":400}, "init_ksm": {},
+        "init_kst": {"XC":200,"XR":150},
     }
-
-    result = solve(test_data, time_limit_sec=30)
-    print(f"Durum    : {result['status']}")
-    print(f"Setup    : {result.get('total_setups', '—')}")
-    print(f"Buffer   : {result.get('total_buffer', '—')}")
-    print(f"Süre     : {result.get('solve_time_sec', '—')}s")
+    r = solve(td, 30)
+    print(f"Durum: {r['status']}, Setup: {r['total_setups']}, Buffer: {r['total_buffer']}")
