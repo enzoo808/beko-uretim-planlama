@@ -130,11 +130,9 @@ class _OptimizeOverlay:
     100% {{ opacity: 0; transform: scale(1.28); }}
 }}
 #beko-opt-root .beko-wordmark {{
-    font-size: 44px; font-weight: 800; color: #ffffff;
-    letter-spacing: 2px;
-    text-shadow: 0 4px 24px rgba(59,130,246,0.55);
+    width: 120px; height: auto;
+    filter: drop-shadow(0 4px 24px rgba(59,130,246,0.55));
     animation: bekoLogoPulse 1.6s ease-in-out infinite;
-    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
 }}
 @keyframes bekoLogoPulse {{
     0%, 100% {{ opacity: 1; transform: scale(1); }}
@@ -194,7 +192,7 @@ class _OptimizeOverlay:
             <div class="beko-ring"></div>
             <div class="beko-ring r2"></div>
             <div class="beko-ring r3"></div>
-            <div class="beko-wordmark">Beko</div>
+            <div class="beko-wordmark-wrap"><img class="beko-wordmark" src="https://raw.githubusercontent.com/enzoo808/beko-uretim-planlama/main/pngwing.com.png" alt="Beko"></div>
         </div>
         <div class="beko-title">Optimizasyon işlemi yapılıyor</div>
         <div class="beko-subtitle">${{msg}}</div>
