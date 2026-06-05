@@ -53,33 +53,57 @@ _BEKO_LOGO_SVG = """
 """
 
 class _OptimizeOverlay:
+    """Mevcut Streamlit sayfasının üstüne fixed-position overlay basar.
+
+    Yaklaşım: components.v1.html bir iframe yaratır. CSS ile bu iframe'i
+    parent dökümana fixed/full-viewport yaparız (parent erişimi yoluyla),
+    böylece overlay ana sayfa üzerinde — tablo, sidebar, her şey üstünde —
+    görünür. Yeni sekme/sayfa açılmaz.
+    """
     def __init__(self, msg: str, est_seconds: float = 3.0):
         self.msg = msg
         self.est_ms = max(500, int(est_seconds * 1000))
         self._slot = None
 
     def __enter__(self):
+        import streamlit.components.v1 as components
         self._slot = st.empty()
-        self._slot.markdown(self._html(), unsafe_allow_html=True)
+        with self._slot.container():
+            components.html(self._html(), height=0, scrolling=False)
         return self
 
     def __exit__(self, exc_type, exc_val, exc_tb):
         if self._slot is not None:
             self._slot.empty()
-        return False  # exception'ı yutmayalım
+        return False
 
     def _html(self) -> str:
         import uuid
         uid = uuid.uuid4().hex[:8]
-        return f"""
-<style>
-#beko-opt-{uid} {{
+        # iframe içinden parent dokümana fixed overlay enjekte ederiz
+        return f"""<!DOCTYPE html>
+<html><head><meta charset="utf-8"></head><body>
+<script>
+(function() {{
+    const uid = "{uid}";
+    const msg = {self.msg!r};
+    const dur = {self.est_ms};
+    // Parent dokümana eriş — Streamlit iframe'i same-origin
+    const doc = window.parent.document;
+    if (!doc) return;
+
+    // Stil enjekte et (idempotent)
+    if (!doc.getElementById('beko-opt-style')) {{
+        const style = doc.createElement('style');
+        style.id = 'beko-opt-style';
+        style.textContent = `
+#beko-opt-root {{
     position: fixed; inset: 0;
     background: radial-gradient(ellipse at 50% 40%,
         rgba(15,40,90,0.92) 0%,
         rgba(4,18,46,0.96) 45%,
         rgba(2,8,24,0.98) 100%);
-    z-index: 999999;
+    z-index: 2147483647;
     display: flex; flex-direction: column;
     align-items: center; justify-content: center;
     backdrop-filter: blur(8px);
@@ -87,136 +111,124 @@ class _OptimizeOverlay:
     animation: bekoOverlayFade 0.35s ease-out;
     font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
 }}
-@keyframes bekoOverlayFade {{
-    from {{ opacity: 0; }}
-    to   {{ opacity: 1; }}
-}}
-#beko-opt-{uid} .beko-logo-wrap {{
-    position: relative;
-    width: 140px; height: 140px;
+@keyframes bekoOverlayFade {{ from {{opacity:0;}} to {{opacity:1;}} }}
+#beko-opt-root .beko-logo-wrap {{
+    position: relative; width: 140px; height: 140px;
     display: flex; align-items: center; justify-content: center;
     margin-bottom: 28px;
 }}
-#beko-opt-{uid} .beko-ring {{
-    position: absolute; inset: 0;
-    border-radius: 50%;
-    border: 2px solid rgba(147,197,253,0.18);
+#beko-opt-root .beko-ring {{
+    position: absolute; inset: 0; border-radius: 50%;
+    border: 2px solid rgba(147,197,253,0.22);
     animation: bekoRingPulse 2.4s ease-in-out infinite;
 }}
-#beko-opt-{uid} .beko-ring.r2 {{
-    animation-delay: 0.8s;
-    inset: -12px;
-}}
-#beko-opt-{uid} .beko-ring.r3 {{
-    animation-delay: 1.6s;
-    inset: -24px;
-}}
+#beko-opt-root .beko-ring.r2 {{ animation-delay: 0.8s; inset: -14px; }}
+#beko-opt-root .beko-ring.r3 {{ animation-delay: 1.6s; inset: -28px; }}
 @keyframes bekoRingPulse {{
-    0%   {{ opacity: 0.7; transform: scale(0.92); }}
-    70%  {{ opacity: 0; transform: scale(1.25); }}
-    100% {{ opacity: 0; transform: scale(1.25); }}
+    0%   {{ opacity: 0.75; transform: scale(0.92); }}
+    70%  {{ opacity: 0; transform: scale(1.28); }}
+    100% {{ opacity: 0; transform: scale(1.28); }}
 }}
-#beko-opt-{uid} .beko-logo-svg {{
-    width: 120px;
-    filter: drop-shadow(0 4px 16px rgba(59,130,246,0.55));
+#beko-opt-root .beko-wordmark {{
+    font-size: 44px; font-weight: 800; color: #ffffff;
+    letter-spacing: 2px;
+    text-shadow: 0 4px 24px rgba(59,130,246,0.55);
     animation: bekoLogoPulse 1.6s ease-in-out infinite;
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
 }}
 @keyframes bekoLogoPulse {{
     0%, 100% {{ opacity: 1; transform: scale(1); }}
-    50%      {{ opacity: 0.55; transform: scale(0.94); }}
+    50%      {{ opacity: 0.5; transform: scale(0.94); }}
 }}
-#beko-opt-{uid} .beko-title {{
-    color: #ffffff;
-    font-size: 19px;
-    font-weight: 600;
-    letter-spacing: 0.3px;
-    margin-bottom: 6px;
-    text-align: center;
+#beko-opt-root .beko-title {{
+    color: #ffffff; font-size: 19px; font-weight: 600;
+    letter-spacing: 0.3px; margin-bottom: 6px; text-align: center;
 }}
-#beko-opt-{uid} .beko-subtitle {{
-    color: rgba(147,197,253,0.75);
-    font-size: 13px;
-    font-weight: 400;
-    margin-bottom: 28px;
-    letter-spacing: 0.4px;
+#beko-opt-root .beko-subtitle {{
+    color: rgba(147,197,253,0.78); font-size: 13px; font-weight: 400;
+    margin-bottom: 28px; letter-spacing: 0.4px;
 }}
-#beko-opt-{uid} .beko-bar-wrap {{
-    width: 340px;
-    height: 6px;
+#beko-opt-root .beko-bar-wrap {{
+    width: 340px; height: 6px;
     background: rgba(255,255,255,0.08);
-    border-radius: 999px;
-    overflow: hidden;
+    border-radius: 999px; overflow: hidden;
     box-shadow: inset 0 1px 2px rgba(0,0,0,0.4);
     position: relative;
 }}
-#beko-opt-{uid} .beko-bar {{
-    height: 100%;
-    width: 0%;
+#beko-opt-root .beko-bar {{
+    height: 100%; width: 0%;
     background: linear-gradient(90deg, #06b6d4 0%, #3b82f6 50%, #1d4ed8 100%);
     border-radius: 999px;
     box-shadow: 0 0 16px rgba(59,130,246,0.6);
-    animation: bekoBarFill {self.est_ms}ms cubic-bezier(0.22, 0.61, 0.36, 1) forwards;
+    transition: width 0.12s linear;
+    position: relative; overflow: hidden;
 }}
-#beko-opt-{uid} .beko-bar::after {{
+#beko-opt-root .beko-bar::after {{
     content: ''; position: absolute; inset: 0;
     background: linear-gradient(90deg, transparent, rgba(255,255,255,0.35), transparent);
     animation: bekoBarShine 1.6s linear infinite;
-}}
-@keyframes bekoBarFill {{
-    0%   {{ width: 0%; }}
-    100% {{ width: 90%; }}
 }}
 @keyframes bekoBarShine {{
     0%   {{ transform: translateX(-100%); }}
     100% {{ transform: translateX(100%); }}
 }}
-#beko-opt-{uid} .beko-pct {{
-    color: #ffffff;
-    font-size: 13px;
-    font-weight: 500;
-    margin-top: 12px;
-    font-variant-numeric: tabular-nums;
-    letter-spacing: 0.5px;
-    opacity: 0.85;
+#beko-opt-root .beko-pct {{
+    color: #ffffff; font-size: 13px; font-weight: 500;
+    margin-top: 12px; font-variant-numeric: tabular-nums;
+    letter-spacing: 0.5px; opacity: 0.88;
 }}
-#beko-opt-{uid} .beko-pct::before {{
-    content: '';
-}}
-</style>
-<div id="beko-opt-{uid}">
-    <div class="beko-logo-wrap">
-        <div class="beko-ring"></div>
-        <div class="beko-ring r2"></div>
-        <div class="beko-ring r3"></div>
-        {_BEKO_LOGO_SVG}
-    </div>
-    <div class="beko-title">Optimizasyon işlemi yapılıyor</div>
-    <div class="beko-subtitle">{self.msg}</div>
-    <div class="beko-bar-wrap"><div class="beko-bar" id="beko-bar-{uid}"></div></div>
-    <div class="beko-pct" id="beko-pct-{uid}">%0</div>
-</div>
-<script>
-(function() {{
-    const bar = document.getElementById('beko-bar-{uid}');
-    const pct = document.getElementById('beko-pct-{uid}');
-    if (!bar || !pct) return;
+        `;
+        doc.head.appendChild(style);
+    }}
+
+    // Önceki overlay varsa kaldır
+    const old = doc.getElementById('beko-opt-root');
+    if (old) old.remove();
+
+    // Overlay'i body'ye ekle
+    const root = doc.createElement('div');
+    root.id = 'beko-opt-root';
+    root.setAttribute('data-uid', uid);
+    root.innerHTML = `
+        <div class="beko-logo-wrap">
+            <div class="beko-ring"></div>
+            <div class="beko-ring r2"></div>
+            <div class="beko-ring r3"></div>
+            <div class="beko-wordmark">Beko</div>
+        </div>
+        <div class="beko-title">Optimizasyon işlemi yapılıyor</div>
+        <div class="beko-subtitle">${{msg}}</div>
+        <div class="beko-bar-wrap"><div class="beko-bar" id="beko-bar-${{uid}}"></div></div>
+        <div class="beko-pct" id="beko-pct-${{uid}}">%0</div>
+    `;
+    doc.body.appendChild(root);
+
+    // Yüzde animasyonu — 0 → 90, est_seconds boyunca
+    const bar = doc.getElementById('beko-bar-' + uid);
+    const pct = doc.getElementById('beko-pct-' + uid);
     const start = performance.now();
-    const dur = {self.est_ms};
     function tick(now) {{
+        if (!doc.getElementById('beko-opt-root')) return; // overlay kaldırıldı
         const t = Math.min(1, (now - start) / dur);
-        // CSS animation 0->90, JS yazıyı senkronize ediyor
         const p = Math.floor(t * 90);
-        pct.textContent = '%' + p;
+        if (bar) bar.style.width = p + '%';
+        if (pct) pct.textContent = '%' + p;
         if (t < 1) requestAnimationFrame(tick);
-        else {{
-            // 90%'da takılı kal — iş bittiğinde DOM zaten kaldırılacak
-            pct.textContent = '%90';
-        }}
     }}
     requestAnimationFrame(tick);
+
+    // Iframe DOM'undan ayrıldığında overlay'i de temizle (Streamlit slot.empty())
+    const cleanup = new MutationObserver(() => {{
+        if (!window.frameElement || !window.frameElement.isConnected) {{
+            const r = doc.getElementById('beko-opt-root');
+            if (r && r.getAttribute('data-uid') === uid) r.remove();
+            cleanup.disconnect();
+        }}
+    }});
+    cleanup.observe(doc.body, {{childList: true, subtree: true}});
 }})();
 </script>
-"""
+</body></html>"""
 
 def optimize_overlay(msg: str, est_seconds: float = 3.0):
     """Streamlit st.spinner yerine kullanılacak Beko-temalı overlay.
