@@ -882,14 +882,10 @@ def run_optimization(current_plan):
                         add = int(cap * produce_frac)
                         if add <= 0: continue
 
-                        # Overstock kontrolü: bu eklemeden sonra rem[d_try:] maksimum?
-                        new_max = max(rem[d_try:]) + add if rem[d_try:] else add
-                        if new_max > threshold and add > deficit * 1.5:
-                            # Yarım üretim yapılsın (sadece açığı karşılayacak kadar)
-                            add = min(add, max(deficit, 1))
-                            new_max = max(rem[d_try:]) + add if rem[d_try:] else add
-                            if new_max > threshold * 1.5:
-                                continue
+                        # ═══ FIX (kullanıcı kuralı): KÜSURATLI ÜRETİM YASAK ═══
+                        # Overstock kontrolünü kaldırdık. Eğer atama yapılıyorsa
+                        # tam tempo × rate × (1 - setup_loss) üretim olur.
+                        # Eskiden: add = min(add, deficit) ile küsuratlı değer üretiyordu.
 
                         old_val = plan["otd_daily"][c][d_try] if d_try < len(plan["otd_daily"].get(c, [])) else 0
                         s1[d_try] = c
@@ -921,57 +917,10 @@ def run_optimization(current_plan):
                         placed = True
                         break
 
-                    # Slot1 dolu, c değil → Slot2 dene
-                    if d_try < len(s1) and s1[d_try] and s1[d_try] != c:
-                        if d_try < len(s2) and s2[d_try] == "":
-                            s1_card = s1[d_try]
-                            sl = setup_loss(s1_card, c)
-                            available = max(0.0, 1.0 - sl)
-                            # Slot2'ye eşit pay düşelim: f2 = available/2
-                            f2 = available / 2.0
-                            add = int(cap * f2 * r)
-                            if add <= 0: continue
-
-                            new_max = max(rem[d_try:]) + add if rem[d_try:] else add
-                            if new_max > threshold * 1.5:
-                                continue
-
-                            old_val = plan["otd_daily"][c][d_try] if d_try < len(plan["otd_daily"].get(c, [])) else 0
-                            s2[d_try] = c
-                            # Split güncelle
-                            sp = plan.setdefault("otd_split", {}).setdefault(line, [(1.0, 0.0)] * nd)
-                            sp[d_try] = (available / 2.0, available / 2.0)
-                            # ═══ BUG FIX (2026-06): otd_daily'yi manuel yazmak yerine alloc'tan deterministik türet ═══
-                            # Eski kod slot1 üretiminden cap1*r çıkarıyordu — kart başka hatta da varsa
-                            # veya rate'ler farklıysa rastgele üretim kaybına neden oluyordu.
-                            plan["otd_daily"] = alloc_to_daily(
-                                plan["otd_alloc"], TEMPO, OTD_LINES,
-                                plan.get("otd_rates", {}),
-                                alloc2_dict=plan.get("otd_alloc2", {}),
-                                split_dict=plan.get("otd_split", {})
-                            )
-                            add = plan["otd_daily"][c][d_try] - old_val  # gerçekleşen ekleme
-                            if add <= 0:
-                                # Türetilen üretim hiç katkı yapmadıysa atamayı geri al
-                                s2[d_try] = ""
-                                sp[d_try] = (1.0, 0.0)
-                                plan["otd_daily"] = alloc_to_daily(
-                                    plan["otd_alloc"], TEMPO, OTD_LINES,
-                                    plan.get("otd_rates", {}),
-                                    alloc2_dict=plan.get("otd_alloc2", {}),
-                                    split_dict=plan.get("otd_split", {})
-                                )
-                                continue
-                            proposals.append({
-                                "type": "OTD slot2 ekle", "card": c, "day": d_try + 1,
-                                "date": SUS_DATES[d_try] if d_try < len(SUS_DATES) else f"G{d_try+1}",
-                                "line": line, "slot": 2, "old": old_val, "new": old_val + add,
-                                "reason": f"{c} KSO Gün {d_def+1}'de −{deficit:,} açık ({s1_card} ile slot paylaşımı)",
-                                "impact": f"+{add:,} adet (Slot2) [setup −%{int(sl*100)}]"
-                            })
-                            plan = recalc_stocks(plan)
-                            placed = True
-                            break
+                    # ═══ FIX (kullanıcı kuralı): SLOT2 PAYLAŞIMI KAPALI ═══
+                    # Slot1 doluysa atlanır, slot2'ye fraksiyonel paylaşım YOK.
+                    # Eski slot2 mantığı 450×0.25=112 gibi küsuratlı değerler üretiyordu.
+                    # Slot2 ihtiyacı varsa MILP Çöz butonu kullanılmalı.
 
             if not placed:
                 # Bu kart için daha fazla yerleştirme imkanı yok
