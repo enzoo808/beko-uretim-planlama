@@ -1281,7 +1281,7 @@ def run_optimization(current_plan):
             ta_fikstur=TA_FIKSTUR_DEFAULT,
             ta_adet=TA_ADET_DEFAULT,
             recalc_fn=recalc_stocks,
-            time_limit_sec=120,
+            time_limit_sec=60,
         )
     # Fallback
     res = run_optimization_legacy_greedy(current_plan)
@@ -2645,7 +2645,7 @@ with tab_panel:
         with hc4:
             if st.button("⚡  OTD'yi Optimize Et", type="primary",
                          use_container_width=True, key="btn_otd_exp"):
-                with optimize_overlay("OTD analiz ve optimize ediliyor", est_seconds=4):
+                with optimize_overlay("OTD analiz ve optimize ediliyor", est_seconds=60):
                     st.session_state.otd_opt_res = run_stage_opt(sus, "OTD")
                 st.rerun()
 
