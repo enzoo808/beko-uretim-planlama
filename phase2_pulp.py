@@ -132,7 +132,7 @@ def solve_phase2(data: dict[str, Any],
                  + pulp.lpSum(KST[k, t] for k in K for t in days))
     prob += total_buf
 
-    cbc = pulp.PULP_CBC_CMD(msg=0, timeLimit=time_limit_sec)
+    cbc = pulp.PULP_CBC_CMD(msg=0, timeLimit=time_limit_sec, gapRel=0.01)
     prob.solve(cbc)
 
     if prob.status != pulp.constants.LpStatusOptimal:
