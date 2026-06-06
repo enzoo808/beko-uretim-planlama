@@ -48,7 +48,7 @@ def solve_phase1(data: dict[str, Any],
     init_ksm  = data["init_ksm"]
     init_kst  = data["init_kst"]
 
-    solver = pywraplp.Solver.CreateSolver("SCIP")
+    solver = pywraplp.Solver.CreateSolver("CBC")
     if not solver:
         return {"status": "ERROR", "message": "SCIP yüklenemedi."}
     solver.SetTimeLimit(time_limit_sec * 1000)
