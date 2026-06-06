@@ -54,6 +54,7 @@ def solve(data: dict[str, Any],
     if not solver:
         return {"status": "ERROR", "message": "SCIP yüklenemedi."}
     solver.SetTimeLimit(time_limit_sec * 1000)
+            solver.SetRelativeMipGap(0.01)
     inf = solver.infinity()
 
     # =================================================================
