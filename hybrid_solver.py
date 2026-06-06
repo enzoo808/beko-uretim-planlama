@@ -38,7 +38,7 @@ def solve(data: dict[str, Any],
     # Faz 1 (atama+setup, MILP) çok daha pahalı; Faz 2 saf LP, saniyeler içinde biter.
     # Bu yüzden bütçenin %85'ini Faz 1'e ayırırız.
     t1 = max(30, int(time_limit_sec * 0.85))
-    t2 = max(10, time_limit_sec - t1)
+    t2 = max(30, time_limit_sec - t1)
 
     # 2. FAZ 1 — Atama ve setup
     r1 = solve_phase1(data, time_limit_sec=t1)
