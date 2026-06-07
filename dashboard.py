@@ -1329,6 +1329,99 @@ def run_stage_opt(plan, stage):
     msg = f"✅ {stage} tamamen fizibil!" if remaining == 0 else f"⚠️ {stage}: {remaining} ihlal kaldı — ek kapasite gerekli"
     return {"status": status, "proposals": stage_props, "new_plan": new_plan, "remaining": remaining, "message": msg}
 
+# ─────────────────────────────────────────────────────────────────────────
+# v3.2 — Eager Fill: Optimize sonrası boş hat-gün hücrelerini doldur
+# ─────────────────────────────────────────────────────────────────────────
+def eager_fill_otd_allocation(plan, ref_plan=None):
+    """Hibrit motor lazy-fill yapar (gerekmedikçe atama yapmaz). Bu fonksiyon
+    optimize çıktısındaki boş hat-gün hücrelerini Tempolar ve hat uygunluğuna
+    göre, **overstock'a düşmeyecek** şekilde doldurur.
+
+    Strateji:
+      1) Her boş (hat, gün) için: o hatta tempo > 0 olan, henüz toplam KSO + üretim
+         < talep horizonu olan kartlar arasından en az setup yaratan ve en yüksek
+         tempolu kartı seç.
+      2) Atama yapıldığında üretim = tempo (1 gün), günlük üretim eklenir, KSO
+         güncellenir; eğer bu atama ileride o kartı overstock'a sokuyorsa atama
+         iptal edilir.
+      3) Sonunda recalc_stocks ile tutarlılık sağlanır.
+
+    ref_plan: overstock kıyaslaması için referans (verilmezse plan'ın kendisi).
+    """
+    p = copy.deepcopy(plan)
+    ref = ref_plan if ref_plan is not None else plan
+    p.setdefault("otd_alloc", {ln: [""]*N_DAYS for ln in OTD_LINES})
+    p.setdefault("otd_daily", {c: [0]*N_DAYS for c in SUS_CARDS})
+
+    # Her kartın 14 gün boyunca toplam (talep + son KST hedefi) ihtiyacı
+    # Aşırı atama yapmamak için "kalan tüketim" hesaplanır.
+    asm_total = {c: sum(p.get("assembly", {}).get(c, [0]*N_DAYS)) for c in SUS_CARDS}
+
+    changed = False
+    for line in OTD_LINES:
+        alloc_row = p["otd_alloc"].get(line, [""]*N_DAYS)
+        for t in range(N_DAYS):
+            if t < len(alloc_row) and alloc_row[t]:
+                continue  # zaten dolu
+
+            # Bu hatta uygun (tempo > 0) kartlar
+            candidates = []
+            for c in SUS_CARDS:
+                tempo = TEMPO.get(line, {}).get(c, 0)
+                if not tempo or tempo <= 0:
+                    continue
+
+                # Toplam üretim < toplam ihtiyaç mı? (overstock kontrolü)
+                produced_so_far = sum(p["otd_daily"].get(c, [0]*N_DAYS))
+                init_kso = p.get("init", {}).get(c, {}).get("o", 0)
+                # Eğer init + üretim > talep + güvenli marj ise atlanır
+                # Marj = 1 günlük talep (esnek alt sınır)
+                daily_demand = (asm_total[c] / N_DAYS) if N_DAYS else 0
+                if produced_so_far + init_kso >= asm_total[c] + daily_demand:
+                    continue  # overstock riski
+
+                # Setup ekstrası: dünkü atama farklıysa setup yaratır
+                prev_card = alloc_row[t-1] if t > 0 and t-1 < len(alloc_row) else ""
+                next_card = alloc_row[t+1] if t+1 < len(alloc_row) else ""
+                setup_penalty = 0
+                if prev_card and prev_card != c:
+                    setup_penalty += 1
+                if next_card and next_card != c:
+                    setup_penalty += 1
+                # XC↔XR zero-loss exception (Ensar memory)
+                if (prev_card, c) in [("XC","XR"),("XR","XC")] or (c, next_card) in [("XC","XR"),("XR","XC")]:
+                    setup_penalty = max(0, setup_penalty - 1)
+
+                # Skor: setup düşük + tempo yüksek + henüz açık ihtiyaç yüksek
+                need = max(0, asm_total[c] - produced_so_far - init_kso)
+                score = need - 5000 * setup_penalty + tempo * 0.1
+                candidates.append((score, c, tempo))
+
+            if not candidates:
+                continue
+            candidates.sort(reverse=True)
+            score, best_card, best_tempo = candidates[0]
+            if score <= 0:
+                continue  # atamaya değmez
+
+            # Atamayı uygula
+            alloc_row[t] = best_card
+            # Üretim ekle (setup loss varsa düş)
+            prev_card = alloc_row[t-1] if t > 0 else ""
+            sl = setup_loss(prev_card, best_card) if prev_card and prev_card != best_card else 0.0
+            produced = int(best_tempo * (1 - sl))
+            p["otd_daily"].setdefault(best_card, [0]*N_DAYS)
+            if t < len(p["otd_daily"][best_card]):
+                p["otd_daily"][best_card][t] += produced
+            changed = True
+
+        p["otd_alloc"][line] = alloc_row
+
+    if changed:
+        p = recalc_stocks(p)
+    return p
+
+
 def apply_stage_proposals(proposals, plan, stage, approvals=None):
     """Onaylanan önerileri plana uygular ve stokları yeniden hesaplar."""
     applied = copy.deepcopy(plan)
@@ -1370,6 +1463,182 @@ def apply_stage_proposals(proposals, plan, stage, approvals=None):
             applied["ta_daily"][c][d] = p["new"]
         count += 1
     return recalc_stocks(applied), count
+
+# ─────────────────────────────────────────────────────────────────────────
+# v3.2 — Önce/Sonra karşılaştırma yardımcıları
+# ─────────────────────────────────────────────────────────────────────────
+def _plan_eq_rem(ref_plan, new_plan, rem_key, cards=None):
+    """İki planın rem (kalan stok) tablosu sayısal olarak özdeş mi?
+    Yuvarlama hatası içerebilecek değerler için ±1 tolerans uygulanır."""
+    cards = cards or SUS_CARDS
+    a = ref_plan.get(rem_key, {})
+    b = new_plan.get(rem_key, {})
+    for c in cards:
+        av = a.get(c, []); bv = b.get(c, [])
+        if len(av) != len(bv): return False
+        for x, y in zip(av, bv):
+            if abs(int(x) - int(y)) > 1:
+                return False
+    return True
+
+def _alloc_eq(ref_plan, new_plan, alloc_key, lines):
+    """İki planın alokasyon tablosu eşit mi?"""
+    a = ref_plan.get(alloc_key, {})
+    b = new_plan.get(alloc_key, {})
+    for ln in lines:
+        av = a.get(ln, []); bv = b.get(ln, [])
+        if len(av) != len(bv): return False
+        for x, y in zip(av, bv):
+            if (x or "") != (y or ""):
+                return False
+    return True
+
+def _count_diffs(ref_plan, new_plan, alloc_key, lines):
+    """Alokasyonda değişen hücre sayısını döner."""
+    a = ref_plan.get(alloc_key, {})
+    b = new_plan.get(alloc_key, {})
+    cnt = 0
+    for ln in lines:
+        av = a.get(ln, []); bv = b.get(ln, [])
+        for x, y in zip(av, bv):
+            if (x or "") != (y or ""):
+                cnt += 1
+    return cnt
+
+def _setup_count(plan, alloc_key, lines):
+    """Bir alokasyon tablosundaki toplam kart değişimi (setup) sayısı."""
+    alloc = plan.get(alloc_key, {})
+    total = 0
+    for ln in lines:
+        seq = [c for c in alloc.get(ln, []) if c]
+        if not seq: continue
+        total += 1  # ilk kurulum
+        for i in range(1, len(seq)):
+            if seq[i] != seq[i-1]:
+                total += 1
+    return total
+
+def _overstock_metric(plan, rem_key, cards=None):
+    """Aşırı stok metriği: rem tablosundaki pozitif değerlerin toplamı.
+    Ne kadar yüksekse o kadar overstock var demektir."""
+    cards = cards or SUS_CARDS
+    rem = plan.get(rem_key, {})
+    total = 0
+    for c in cards:
+        for v in rem.get(c, []):
+            if v > 0:
+                total += int(v)
+    return total
+
+def _deficit_metric(plan, rem_key, cards=None):
+    """Stok açığı metriği: rem tablosundaki negatif değerlerin |toplamı|."""
+    cards = cards or SUS_CARDS
+    rem = plan.get(rem_key, {})
+    total = 0
+    for c in cards:
+        for v in rem.get(c, []):
+            if v < 0:
+                total += int(-v)
+    return total
+
+def _summary_card(label, before_val, after_val, fmt="{:,}", lower_is_better=True):
+    """Önce/Sonra karşılaştırma kartı (HTML)."""
+    delta = after_val - before_val
+    if lower_is_better:
+        color = "#22c55e" if delta < 0 else ("#ef4444" if delta > 0 else "#94a3b8")
+        arrow = "▼" if delta < 0 else ("▲" if delta > 0 else "─")
+    else:
+        color = "#22c55e" if delta > 0 else ("#ef4444" if delta < 0 else "#94a3b8")
+        arrow = "▲" if delta > 0 else ("▼" if delta < 0 else "─")
+    delta_str = f"{arrow} {fmt.format(abs(delta))}" if delta != 0 else "─"
+    return (
+        '<div style="background:rgba(30,41,59,0.6);border:1px solid #334155;'
+        'border-radius:10px;padding:12px 14px;min-width:160px;flex:1;">'
+        f'<div style="color:#94a3b8;font-size:0.78rem;margin-bottom:4px;">{label}</div>'
+        f'<div style="display:flex;align-items:baseline;gap:10px;">'
+        f'<span style="color:#cbd5e1;font-size:0.95rem;">{fmt.format(before_val)}</span>'
+        f'<span style="color:#64748b;font-size:0.85rem;">→</span>'
+        f'<span style="color:#f1f5f9;font-size:1.15rem;font-weight:700;">{fmt.format(after_val)}</span>'
+        f'</div>'
+        f'<div style="color:{color};font-size:0.82rem;margin-top:4px;font-weight:600;">{delta_str}</div>'
+        '</div>'
+    )
+
+def _render_oncesonra_panel(ref_plan, new_plan, stage, lines=None, cards_for_rem=None):
+    """OTD/MD/TA için tam karşılaştırma paneli: atama + KSO/KSM/KST + setup + overstock."""
+    if stage == "OTD":
+        alloc_key, rem_key = "otd_alloc", "otd_rem"
+        lines = lines or OTD_LINES
+        stage_label = "OTD"
+    elif stage == "MD":
+        alloc_key, rem_key = "md_alloc", "md_rem"
+        lines = lines or ["MD1", "MD2"]
+        stage_label = "MD"
+    else:
+        alloc_key, rem_key = None, "ta_rem"
+        lines = []
+        stage_label = "TA"
+
+    # Metrikler
+    before_overstock = _overstock_metric(ref_plan, rem_key, cards_for_rem)
+    after_overstock  = _overstock_metric(new_plan, rem_key, cards_for_rem)
+    before_deficit   = _deficit_metric(ref_plan, rem_key, cards_for_rem)
+    after_deficit    = _deficit_metric(new_plan, rem_key, cards_for_rem)
+    if alloc_key:
+        before_setups = _setup_count(ref_plan, alloc_key, lines)
+        after_setups  = _setup_count(new_plan, alloc_key, lines)
+        alloc_diffs   = _count_diffs(ref_plan, new_plan, alloc_key, lines)
+    else:
+        before_setups = after_setups = alloc_diffs = 0
+
+    # Üst özet kartları
+    cards_html = '<div style="display:flex;gap:10px;flex-wrap:wrap;margin-bottom:14px;">'
+    if alloc_key:
+        cards_html += _summary_card(f"⚙️ {stage_label} Setup Sayısı", before_setups, after_setups, lower_is_better=True)
+        cards_html += _summary_card("🔄 Değişen Hücre", 0, alloc_diffs, lower_is_better=False)
+    cards_html += _summary_card("📈 Aşırı Stok (Overstock)", before_overstock, after_overstock, lower_is_better=True)
+    cards_html += _summary_card("⚠️ Stok Açığı", before_deficit, after_deficit, lower_is_better=True)
+    cards_html += '</div>'
+    st.markdown(cards_html, unsafe_allow_html=True)
+
+    # Atama karşılaştırması
+    if alloc_key:
+        st.markdown("**🔁 Hat – Kart Alokasyonu (Öncesi vs Sonrası)**")
+        st.caption("🟩 Yeşil çerçeve = değişen hücreler")
+        col_a, col_b = st.columns(2)
+        with col_a:
+            st.markdown('<div style="color:#94a3b8;font-size:0.85rem;margin-bottom:4px;">📋 Öncesi (Referans)</div>', unsafe_allow_html=True)
+            if stage == "OTD":
+                st.markdown(make_alloc(ref_plan[alloc_key], lines, d_idx=DATE_INDICES,
+                                       rates_dict=ref_plan.get("otd_rates", {}),
+                                       alloc2_dict=ref_plan.get("otd_alloc2"),
+                                       split_dict=ref_plan.get("otd_split")), unsafe_allow_html=True)
+            else:
+                st.markdown(make_alloc(ref_plan[alloc_key], lines, d_idx=DATE_INDICES,
+                                       rates_dict=ref_plan.get("md_rates", {})), unsafe_allow_html=True)
+        with col_b:
+            st.markdown('<div style="color:#22c55e;font-size:0.85rem;margin-bottom:4px;">⚡ Sonrası (Optimize)</div>', unsafe_allow_html=True)
+            if stage == "OTD":
+                st.markdown(make_alloc_compare(new_plan[alloc_key], ref_plan[alloc_key], lines,
+                                               d_idx=DATE_INDICES,
+                                               rates_dict=new_plan.get("otd_rates", {})), unsafe_allow_html=True)
+            else:
+                st.markdown(make_alloc_compare(new_plan[alloc_key], ref_plan[alloc_key], lines,
+                                               d_idx=DATE_INDICES,
+                                               rates_dict=new_plan.get("md_rates", {})), unsafe_allow_html=True)
+
+    # Kalan stok karşılaştırması (yan yana)
+    rem_label = {"OTD": "KSO", "MD": "KSM", "TA": "KST"}[stage]
+    rem_init  = {"OTD": "o",   "MD": "m",   "TA": "t"  }[stage]
+    st.markdown(f"**📦 Kalan Stok — {rem_label} (Öncesi vs Sonrası)**")
+    col_c, col_d = st.columns(2)
+    with col_c:
+        st.markdown('<div style="color:#94a3b8;font-size:0.85rem;margin-bottom:4px;">📋 Öncesi (Referans)</div>', unsafe_allow_html=True)
+        st.markdown(make_grid(ref_plan[rem_key], rem_init, d_idx=DATE_INDICES), unsafe_allow_html=True)
+    with col_d:
+        st.markdown('<div style="color:#22c55e;font-size:0.85rem;margin-bottom:4px;">⚡ Sonrası (Optimize)</div>', unsafe_allow_html=True)
+        st.markdown(make_grid_plan(new_plan[rem_key], ref_plan[rem_key], rem_init, d_idx=DATE_INDICES), unsafe_allow_html=True)
+
 
 def process_upload_file(upfile, state_key):
     """Aynı dosyanın tekrar işlenmesini önler, yeni dosyayı döner."""
@@ -2626,7 +2895,14 @@ with tab_panel:
             if st.button("⚡  OTD'yi Optimize Et", type="primary",
                          use_container_width=True, key="btn_otd_exp"):
                 with optimize_overlay("OTD analiz ve optimize ediliyor", est_seconds=60):
-                    st.session_state.otd_opt_res = run_stage_opt(sus, "OTD")
+                    _res_otd = run_stage_opt(sus, "OTD")
+                    # v3.2: Hibrit motor lazy-fill yapar. Boş hat-gün hücrelerini
+                    # Tempolar + overstock kontrolüne göre eager doldur.
+                    try:
+                        _res_otd["new_plan"] = eager_fill_otd_allocation(_res_otd["new_plan"], ref_plan=sus)
+                    except Exception as _e:
+                        pass  # eager fill başarısızsa orijinal sonuç korunur
+                    st.session_state.otd_opt_res = _res_otd
                 st.rerun()
 
         # ── İçerik: referans tek görünüm VEYA öncesi/sonrası ──
@@ -2946,7 +3222,7 @@ with tab_panel:
 
         else:
             # Optimizasyon sonucu mevcut — iç sekmeler: Referans | Optimize
-            ot1, ot2 = st.tabs(["📋 Referans Plan (Mevcut)", "⚡ Optimize Sonucu"])
+            ot1, ot2, ot3 = st.tabs(["📋 Referans Plan (Mevcut)", "⚡ Optimize Sonucu", "🆚 Öncesi/Sonrası"])
             np = otd_res["new_plan"]
 
             with ot1:
@@ -2961,14 +3237,28 @@ with tab_panel:
             with ot2:
                 st.markdown(f"**{otd_res['message']}**")
                 proposals = otd_res.get("proposals", [])
-                # Tablolar her zaman gösterilir — proposals boş olsa dahi
-                st.caption("🟩 Yeşil çerçeve = referanstan farklı hücreler")
-                st.markdown("**Hat – Kart Alokasyonu (Optimize)**")
-                st.markdown(make_alloc_compare(np["otd_alloc"], sus["otd_alloc"], OTD_LINES, d_idx=DATE_INDICES, rates_dict=sus.get("otd_rates",{})), unsafe_allow_html=True)
-                st.markdown("**Günlük Üretim (Optimize)**")
-                st.markdown(make_grid_plan(np["otd_daily"], sus["otd_daily"], d_idx=DATE_INDICES), unsafe_allow_html=True)
-                st.markdown("**📦 Kalan Stok — KSO (Optimize)**")
-                st.markdown(make_grid_plan(np["otd_rem"], sus["otd_rem"], "o", d_idx=DATE_INDICES), unsafe_allow_html=True)
+                # v3.2 FIX: "Önerilen değişiklik yok" mesajıyla görsel çelişmesin diye —
+                # proposals boş VE alokasyon/KSO referansla özdeşse referans tablosu çizilir.
+                _alloc_same = _alloc_eq(sus, np, "otd_alloc", OTD_LINES)
+                _rem_same   = _plan_eq_rem(sus, np, "otd_rem")
+                _show_as_ref = (not proposals) and _alloc_same and _rem_same
+
+                if _show_as_ref:
+                    st.caption("ℹ️ Plan zaten optimal — referans tablosu gösteriliyor.")
+                    st.markdown("**Hat – Kart Alokasyonu**")
+                    st.markdown(make_alloc(sus["otd_alloc"], OTD_LINES, d_idx=DATE_INDICES, rates_dict=sus.get("otd_rates",{}), alloc2_dict=sus.get("otd_alloc2"), split_dict=sus.get("otd_split")), unsafe_allow_html=True)
+                    st.markdown("**Günlük Üretim**")
+                    st.markdown(make_grid(sus["otd_daily"], d_idx=DATE_INDICES), unsafe_allow_html=True)
+                    st.markdown("**📦 Kalan Stok — KSO**")
+                    st.markdown(make_grid(sus["otd_rem"], "o", d_idx=DATE_INDICES), unsafe_allow_html=True)
+                else:
+                    st.caption("🟩 Yeşil çerçeve = referanstan farklı hücreler")
+                    st.markdown("**Hat – Kart Alokasyonu (Optimize)**")
+                    st.markdown(make_alloc_compare(np["otd_alloc"], sus["otd_alloc"], OTD_LINES, d_idx=DATE_INDICES, rates_dict=sus.get("otd_rates",{})), unsafe_allow_html=True)
+                    st.markdown("**Günlük Üretim (Optimize)**")
+                    st.markdown(make_grid_plan(np["otd_daily"], sus["otd_daily"], d_idx=DATE_INDICES), unsafe_allow_html=True)
+                    st.markdown("**📦 Kalan Stok — KSO (Optimize)**")
+                    st.markdown(make_grid_plan(np["otd_rem"], sus["otd_rem"], "o", d_idx=DATE_INDICES), unsafe_allow_html=True)
                 if proposals:
                     st.markdown("---")
                     st.markdown("**📋 Değişiklik Önerileri:**")
@@ -3007,6 +3297,12 @@ with tab_panel:
                     if st.button("Tamam", key="otd_ok_btn"):
                         st.session_state.otd_opt_res = None
                         st.rerun()
+
+            # ─── v3.2: 🆚 Öncesi/Sonrası sekmesi (tam karşılaştırma) ───
+            with ot3:
+                st.markdown("**OTD — Tam Karşılaştırma Paneli**")
+                st.caption("Atama farkları + KSO değişimi + setup sayısı + overstock metriği")
+                _render_oncesonra_panel(sus, np, "OTD", lines=OTD_LINES)
 
     # ==================================================================
     # MD EXPANDER
@@ -3311,7 +3607,7 @@ with tab_panel:
                                     st.error("❌ Yetkisiz sicil numarası.")
 
         else:
-            mt1, mt2 = st.tabs(["📋 Referans Plan (Mevcut)", "⚡ Optimize Sonucu"])
+            mt1, mt2, mt3 = st.tabs(["📋 Referans Plan (Mevcut)", "⚡ Optimize Sonucu", "🆚 Öncesi/Sonrası"])
             np = md_res["new_plan"]
 
             with mt1:
@@ -3325,12 +3621,24 @@ with tab_panel:
             with mt2:
                 st.markdown(f"**{md_res['message']}**")
                 proposals = md_res.get("proposals", [])
-                # Tablolar her zaman gösterilir
-                st.caption("🟩 Yeşil çerçeve = referanstan farklı hücreler")
-                st.markdown("**Günlük Üretim (Optimize)**")
-                st.markdown(make_grid_plan(np["md_daily"], sus["md_daily"], d_idx=DATE_INDICES), unsafe_allow_html=True)
-                st.markdown("**📦 Kalan Stok — KSM (Optimize)**")
-                st.markdown(make_grid_plan(np["md_rem"], sus["md_rem"], "m", d_idx=DATE_INDICES), unsafe_allow_html=True)
+                # v3.2 FIX: proposals boş VE KSM referansla özdeşse referansı çiz.
+                _md_cards = [c for c in SUS_CARDS if PROCESS_MAP.get(c)]
+                _rem_same = _plan_eq_rem(sus, np, "md_rem", cards=_md_cards)
+                _alloc_same = _alloc_eq(sus, np, "md_alloc", ["MD1", "MD2"])
+                _show_as_ref = (not proposals) and _alloc_same and _rem_same
+
+                if _show_as_ref:
+                    st.caption("ℹ️ Plan zaten optimal — referans tablosu gösteriliyor.")
+                    st.markdown("**Günlük Üretim**")
+                    st.markdown(make_grid(sus["md_daily"], d_idx=DATE_INDICES), unsafe_allow_html=True)
+                    st.markdown("**📦 Kalan Stok — KSM**")
+                    st.markdown(make_grid(sus["md_rem"], "m", d_idx=DATE_INDICES), unsafe_allow_html=True)
+                else:
+                    st.caption("🟩 Yeşil çerçeve = referanstan farklı hücreler")
+                    st.markdown("**Günlük Üretim (Optimize)**")
+                    st.markdown(make_grid_plan(np["md_daily"], sus["md_daily"], d_idx=DATE_INDICES), unsafe_allow_html=True)
+                    st.markdown("**📦 Kalan Stok — KSM (Optimize)**")
+                    st.markdown(make_grid_plan(np["md_rem"], sus["md_rem"], "m", d_idx=DATE_INDICES), unsafe_allow_html=True)
                 if proposals:
                     st.markdown("---")
                     st.markdown("**📋 Değişiklik Önerileri:**")
@@ -3369,6 +3677,13 @@ with tab_panel:
                     if st.button("Tamam", key="md_ok_btn"):
                         st.session_state.md_opt_res = None
                         st.rerun()
+
+            # ─── v3.2: 🆚 Öncesi/Sonrası sekmesi (tam karşılaştırma) ───
+            with mt3:
+                st.markdown("**MD — Tam Karşılaştırma Paneli**")
+                st.caption("Atama farkları + KSM değişimi + setup sayısı + overstock metriği")
+                _md_cards_panel = [c for c in SUS_CARDS if PROCESS_MAP.get(c)]
+                _render_oncesonra_panel(sus, np, "MD", lines=["MD1", "MD2"], cards_for_rem=_md_cards_panel)
 
     # ==================================================================
     # TA EXPANDER
@@ -3600,7 +3915,7 @@ with tab_panel:
                                     st.error("❌ Yetkisiz sicil numarası.")
 
         else:
-            tt1, tt2 = st.tabs(["📋 Referans Plan (Mevcut)", "⚡ Optimize Sonucu"])
+            tt1, tt2, tt3 = st.tabs(["📋 Referans Plan (Mevcut)", "⚡ Optimize Sonucu", "🆚 Öncesi/Sonrası"])
             np = ta_res["new_plan"]
 
             with tt1:
@@ -3612,12 +3927,22 @@ with tab_panel:
             with tt2:
                 st.markdown(f"**{ta_res['message']}**")
                 proposals = ta_res.get("proposals", [])
-                # Tablolar her zaman gösterilir
-                st.caption("🟩 Yeşil çerçeve = referanstan farklı hücreler")
-                st.markdown("**Günlük Üretim (Optimize)**")
-                st.markdown(make_grid_plan(np["ta_daily"], sus["ta_daily"], d_idx=DATE_INDICES), unsafe_allow_html=True)
-                st.markdown("**📦 Kalan Stok — KST (Optimize)**")
-                st.markdown(make_grid_plan(np["ta_rem"], sus["ta_rem"], "t", d_idx=DATE_INDICES), unsafe_allow_html=True)
+                # v3.2 FIX: proposals boş VE KST referansla özdeşse referansı çiz.
+                _rem_same = _plan_eq_rem(sus, np, "ta_rem")
+                _show_as_ref = (not proposals) and _rem_same
+
+                if _show_as_ref:
+                    st.caption("ℹ️ Plan zaten optimal — referans tablosu gösteriliyor.")
+                    st.markdown("**Günlük Üretim**")
+                    st.markdown(make_grid(sus["ta_daily"], d_idx=DATE_INDICES), unsafe_allow_html=True)
+                    st.markdown("**📦 Kalan Stok — KST**")
+                    st.markdown(make_grid(sus["ta_rem"], "t", d_idx=DATE_INDICES), unsafe_allow_html=True)
+                else:
+                    st.caption("🟩 Yeşil çerçeve = referanstan farklı hücreler")
+                    st.markdown("**Günlük Üretim (Optimize)**")
+                    st.markdown(make_grid_plan(np["ta_daily"], sus["ta_daily"], d_idx=DATE_INDICES), unsafe_allow_html=True)
+                    st.markdown("**📦 Kalan Stok — KST (Optimize)**")
+                    st.markdown(make_grid_plan(np["ta_rem"], sus["ta_rem"], "t", d_idx=DATE_INDICES), unsafe_allow_html=True)
                 if proposals:
                     st.markdown("---")
                     approvals_ta = {}
@@ -3653,6 +3978,12 @@ with tab_panel:
                     if st.button("Tamam", key="ta_ok_btn"):
                         st.session_state.ta_opt_res = None
                         st.rerun()
+
+            # ─── v3.2: 🆚 Öncesi/Sonrası sekmesi (tam karşılaştırma) ───
+            with tt3:
+                st.markdown("**TA — Tam Karşılaştırma Paneli**")
+                st.caption("KST değişimi + overstock metriği + stok açığı")
+                _render_oncesonra_panel(sus, np, "TA")
 
 
 # =============  TAB 2: MONTAJ PLANI  (YENİ — talep karşılama analizi)  =====
