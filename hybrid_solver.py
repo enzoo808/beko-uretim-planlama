@@ -27,30 +27,33 @@ from phase2_pulp     import solve_phase2
 
 
 def solve(data: dict[str, Any],
-          time_limit_sec: int = 120) -> dict[str, Any]:
+          time_limit_sec: int = 120,
+          daily_total_min: float = 2600.0,
+          daily_total_max: float = 3100.0,
+          stock_band_low_ratio: float = 0.80,
+          stock_band_high_ratio: float = 1.20) -> dict[str, Any]:
     """
     Hibrit çözüm. Toplam time_limit'i iki faza bölüştürür:
-      Faz 1 (atama, setup minimize)  : %50
-      Faz 2 (buffer minimize)        : %50
-    app.py beklediği şemada birleştirilmiş sonuç döner.
+      Faz 1 (atama, setup minimize)  : %85
+      Faz 2 (buffer + bant + günlük min): %15
     """
-    # 1. Zaman bütçesi
-    # Faz 1 (atama+setup, MILP) çok daha pahalı; Faz 2 saf LP, saniyeler içinde biter.
-    # Bu yüzden bütçenin %85'ini Faz 1'e ayırırız.
     t1 = max(30, int(time_limit_sec * 0.85))
     t2 = max(30, time_limit_sec - t1)
 
-    # 2. FAZ 1 — Atama ve setup
     r1 = solve_phase1(data, time_limit_sec=t1)
     if r1["status"] in ("INFEASIBLE", "ERROR"):
         return r1
 
-    # 3. FAZ 2 — Sabit atama altında buffer minimize
-    r2 = solve_phase2(data, phase1_result=r1, time_limit_sec=t2)
+    r2 = solve_phase2(data, phase1_result=r1, time_limit_sec=t2,
+                      daily_total_min=daily_total_min,
+                      daily_total_max=daily_total_max,
+                      stock_band_low_ratio=stock_band_low_ratio,
+                      stock_band_high_ratio=stock_band_high_ratio)
     if r2["status"] in ("INFEASIBLE", "ERROR"):
         return {"status": "INFEASIBLE",
-                "message": "Faz 1 başarılı ama Faz 2 LP fizibil değil — "
-                           "veri çelişkisi var.",
+                "message": r2.get("message",
+                    "Faz 1 başarılı ama Faz 2 LP fizibil değil — "
+                    "Talep > kapasite. Negatif KSO sıfır olamadı."),
                 "phase1": r1}
 
     # 4. Birleştirilmiş çıktı (app.py'nin beklediği şema)
@@ -73,6 +76,8 @@ def solve(data: dict[str, Any],
         "otd_setups":     r1["phase1_otd_setups"],
         "md_setups":      r1["phase1_md_setups"],
         "total_buffer":   r2["phase2_buffer"],
+        "band_violation": r2.get("phase2_band_violation", 0),
+        "daily_under":    r2.get("phase2_daily_under", 0),
         "solve_time_sec": round(r1["phase1_solve_time"] + r2["phase2_solve_time"], 2),
         # Faz-bazlı detay (dashboard'da gösterilebilir)
         "phase1_solver":  "OR-Tools / SCIP",
