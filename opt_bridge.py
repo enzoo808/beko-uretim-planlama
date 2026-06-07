@@ -170,12 +170,18 @@ def _result_to_proposals(plan_before, result, sus_cards, otd_lines, n_days, sus_
 
 def run_optimization_hybrid(current_plan, sus_cards, otd_lines, tempo, process_map,
                             sus_dates, n_days, md_tempo=None, ta_fikstur=None,
-                            ta_adet=None, recalc_fn=None, time_limit_sec=120):
+                            ta_adet=None, recalc_fn=None, time_limit_sec=120,
+                            daily_total_min=2600.0, daily_total_max=3100.0,
+                            stock_band_low_ratio=0.80, stock_band_high_ratio=1.20):
     """dashboard.py'dan çağrılır. Sabitler parametre olarak gelir — import dashboard YOK."""
     data = _plan_to_data(current_plan, sus_cards, otd_lines, tempo,
                          md_tempo, ta_fikstur, ta_adet, n_days, process_map)
     try:
-        result = hybrid_solve(data, time_limit_sec=time_limit_sec)
+        result = hybrid_solve(data, time_limit_sec=time_limit_sec,
+                              daily_total_min=daily_total_min,
+                              daily_total_max=daily_total_max,
+                              stock_band_low_ratio=stock_band_low_ratio,
+                              stock_band_high_ratio=stock_band_high_ratio)
     except Exception as e:
         return {
             "status": "error",
@@ -186,12 +192,20 @@ def run_optimization_hybrid(current_plan, sus_cards, otd_lines, tempo, process_m
         }
 
     if result.get("status") not in ("OPTIMAL", "FEASIBLE"):
+        # INFEASIBLE — kullanıcıya net uyarı
         return {
-            "status": "partial",
-            "message": result.get("message", "Hibrit motor fizibil çözüm bulamadı."),
+            "status": "infeasible",
+            "message": result.get("message",
+                "⚠️ Talep mevcut kapasiteyle karşılanamıyor — negatif KSO sıfırlanamadı. "
+                "Bant esnetin veya talep azaltın."),
             "proposals": [], "new_plan": current_plan,
             "remaining_violations": -1,
-            "suggestions": ["• Talep ile kapasite uyumsuz olabilir"],
+            "suggestions": [
+                "• Günlük üretim alt bandını düşürün (örn. 2400'e)",
+                "• Stok bandı oranını genişletin (örn. ±%30)",
+                "• Hat-kart uygunluğunu kontrol edin (Tempolar)",
+                "• Talep planını gözden geçirin"
+            ],
         }
 
     proposals, new_plan = _result_to_proposals(
