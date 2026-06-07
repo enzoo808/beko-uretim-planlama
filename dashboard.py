@@ -1331,94 +1331,201 @@ def run_stage_opt(plan, stage):
 
 # ─────────────────────────────────────────────────────────────────────────
 # v3.2 — Eager Fill: Optimize sonrası boş hat-gün hücrelerini doldur
+# v3.3 — Bant kısıtı + kart stok hedefi + 2 slot desteği
 # ─────────────────────────────────────────────────────────────────────────
+DAILY_TOTAL_MIN = 2600   # Günlük toplam OTD üretim alt bandı (yumuşak hedef)
+DAILY_TOTAL_MAX = 3100   # Günlük toplam OTD üretim üst bandı (yumuşak hedef)
+STOCK_BAND_LOW  = 0.80   # Kart KSO hedef bandı: max_tempo × 0.80
+STOCK_BAND_HIGH = 1.20   # Kart KSO hedef bandı: max_tempo × 1.20
+
+def _card_max_tempo(card):
+    """Bir kartın tüm OTD hatları üzerindeki en yüksek tempo değeri."""
+    return max((TEMPO.get(l, {}).get(card, 0) or 0) for l in OTD_LINES)
+
+def _card_stock_targets(card):
+    """Kart için yumuşak hedef bandı: (alt, üst). max_tempo × [%80, %120]."""
+    mt = _card_max_tempo(card)
+    if mt <= 0:
+        return (0, 0)
+    return (int(mt * STOCK_BAND_LOW), int(mt * STOCK_BAND_HIGH))
+
 def eager_fill_otd_allocation(plan, ref_plan=None):
     """Hibrit motor lazy-fill yapar (gerekmedikçe atama yapmaz). Bu fonksiyon
-    optimize çıktısındaki boş hat-gün hücrelerini Tempolar ve hat uygunluğuna
-    göre, **overstock'a düşmeyecek** şekilde doldurur.
+    optimize çıktısındaki boş hat-gün hücrelerini doldurur ve aşırı stoğu kırpar.
+
+    Hedefler (yumuşak, lex sırası):
+      1) Negatif KSO olan kart-günler için üretim ekle (açık önceliği)
+      2) Günlük toplam OTD üretimini 2600–3100 bandına çek
+      3) Her kartın KSO'sunu max_tempo(c) × [%80, %120] bandında tut
+      4) Setup sayısını koru (mümkün olduğunca aynı kartı sürdür)
 
     Strateji:
-      1) Her boş (hat, gün) için: o hatta tempo > 0 olan, henüz toplam KSO + üretim
-         < talep horizonu olan kartlar arasından en az setup yaratan ve en yüksek
-         tempolu kartı seç.
-      2) Atama yapıldığında üretim = tempo (1 gün), günlük üretim eklenir, KSO
-         güncellenir; eğer bu atama ileride o kartı overstock'a sokuyorsa atama
-         iptal edilir.
-      3) Sonunda recalc_stocks ile tutarlılık sağlanır.
-
-    ref_plan: overstock kıyaslaması için referans (verilmezse plan'ın kendisi).
+      - Gün gün ileri yürür, her gün için boş (hat) hücrelere atama dener.
+      - 2 slot mantığı: bir hat zaten doluysa ve günlük toplam hâlâ alt banda
+        ulaşmadıysa, ikinci slota uygun bir kart eklenir (split=0.5/0.5).
+      - Kart seçimi skorlaması:
+          + need(t..N) > 0 ise +(need / 1000)
+          + KSO < alt_band ise +bonus  (alttan çık)
+          + KSO > üst_band ise -ceza   (üste çıkma)
+          - setup ekstrası varsa -50 per setup (XC↔XR muafiyeti)
     """
     p = copy.deepcopy(plan)
-    ref = ref_plan if ref_plan is not None else plan
-    p.setdefault("otd_alloc", {ln: [""]*N_DAYS for ln in OTD_LINES})
-    p.setdefault("otd_daily", {c: [0]*N_DAYS for c in SUS_CARDS})
+    p.setdefault("otd_alloc",  {ln: [""]*N_DAYS for ln in OTD_LINES})
+    p.setdefault("otd_alloc2", {ln: [""]*N_DAYS for ln in OTD_LINES})
+    p.setdefault("otd_split",  {ln: [(1.0, 0.0)]*N_DAYS for ln in OTD_LINES})
+    p.setdefault("otd_daily",  {c: [0]*N_DAYS for c in SUS_CARDS})
 
-    # Her kartın 14 gün boyunca toplam (talep + son KST hedefi) ihtiyacı
-    # Aşırı atama yapmamak için "kalan tüketim" hesaplanır.
+    # Toplam talep ve mevcut KSO hedef bantları
     asm_total = {c: sum(p.get("assembly", {}).get(c, [0]*N_DAYS)) for c in SUS_CARDS}
+    init_kso  = {c: p.get("init", {}).get(c, {}).get("o", 0) for c in SUS_CARDS}
+    stock_band = {c: _card_stock_targets(c) for c in SUS_CARDS}
 
-    changed = False
-    for line in OTD_LINES:
-        alloc_row = p["otd_alloc"].get(line, [""]*N_DAYS)
-        for t in range(N_DAYS):
-            if t < len(alloc_row) and alloc_row[t]:
-                continue  # zaten dolu
+    def _kso_at(c, t):
+        """t gün sonunda KSO (recalc'a güvenmeden ileri hesap)."""
+        produced = sum(p["otd_daily"].get(c, [0]*N_DAYS)[:t+1])
+        # MD/TA çekişi de düşülmeli — basitlik için ref_plan'ın çekişini kullan
+        consumed = 0
+        if ref_plan is not None:
+            ref_daily = ref_plan.get("md_daily", {}).get(c, [0]*N_DAYS) if PROCESS_MAP.get(c) \
+                        else ref_plan.get("ta_daily", {}).get(c, [0]*N_DAYS)
+            consumed = sum(ref_daily[:t+1])
+        return init_kso[c] + produced - consumed
 
-            # Bu hatta uygun (tempo > 0) kartlar
-            candidates = []
+    def _daily_total(t):
+        return sum(p["otd_daily"].get(c, [0]*N_DAYS)[t] for c in SUS_CARDS)
+
+    def _score_card(c, line, t, slot):
+        """Bir kart-hat-gün-slot atamasının skoru."""
+        tempo = TEMPO.get(line, {}).get(c, 0)
+        if tempo <= 0:
+            return None  # uyumsuz
+        low, high = stock_band[c]
+        cur_kso = _kso_at(c, t)
+        # Tempo çarpanı slota göre (slot2 yarı kapasite)
+        produced_if_assigned = tempo * (0.5 if slot == 2 else 1.0)
+        projected = cur_kso + produced_if_assigned
+
+        # Skor bileşenleri
+        score = 0.0
+        # (a) Açık kapama — negatif KSO varsa büyük bonus
+        if cur_kso < 0:
+            score += 1000 + abs(cur_kso)
+        # (b) Alt banttan yukarı çıkma teşviki
+        if cur_kso < low:
+            score += (low - cur_kso) * 0.5
+        # (c) Üst bandı geçme cezası
+        if projected > high:
+            over = projected - high
+            score -= over * 1.0
+            # Çok aşmışsa hiç atama yapma
+            if projected > high * 1.5:
+                return None
+        # (d) Toplam talebe yaklaşma
+        produced_so_far = sum(p["otd_daily"].get(c, [0]*N_DAYS))
+        need_left = asm_total[c] - produced_so_far - init_kso[c]
+        if need_left > 0:
+            score += min(need_left, tempo) * 0.3
+        # (e) Setup cezası
+        alloc_row = p["otd_alloc"][line]
+        prev_card = alloc_row[t-1] if t > 0 and alloc_row[t-1] else ""
+        if prev_card and prev_card != c:
+            sl = setup_loss(prev_card, c)
+            if sl > 0:
+                score -= 50  # XC↔XR'da setup_loss=0 → ceza yok
+        # (f) Slot2 ise hafif ceza (slot1 önceliği)
+        if slot == 2:
+            score -= 10
+        return score, produced_if_assigned
+
+    # Gün gün ilerle
+    for t in range(N_DAYS):
+        # Günlük tavan kontrolü: zaten DAILY_TOTAL_MAX'ı aştıysa atama yapma
+        # Tavan kontrolü: bandın ÜST sınırını aşmamaya çalış
+        # Her hat için slot1 boşsa doldur dene
+        for line in OTD_LINES:
+            if _daily_total(t) >= DAILY_TOTAL_MAX:
+                break
+            if p["otd_alloc"][line][t]:
+                continue  # slot1 dolu
+
+            # En iyi kartı seç
+            best = None
             for c in SUS_CARDS:
-                tempo = TEMPO.get(line, {}).get(c, 0)
-                if not tempo or tempo <= 0:
-                    continue
+                res = _score_card(c, line, t, slot=1)
+                if res is None: continue
+                sc, prod = res
+                if sc <= 0: continue
+                # Tavan kontrol
+                if _daily_total(t) + prod > DAILY_TOTAL_MAX:
+                    # Tavanı aşıyorsa skor düşür ama tamamen reddet (yumuşak)
+                    if _daily_total(t) + prod > DAILY_TOTAL_MAX * 1.05:
+                        continue
+                if best is None or sc > best[0]:
+                    best = (sc, c, prod)
+            if best:
+                _, best_card, prod = best
+                p["otd_alloc"][line][t] = best_card
+                # Setup loss ile gerçek üretimi hesapla
+                prev_card = p["otd_alloc"][line][t-1] if t > 0 else ""
+                sl = setup_loss(prev_card, best_card) if (prev_card and prev_card != best_card) else 0.0
+                actual = int(TEMPO[line][best_card] * (1 - sl))
+                p["otd_daily"].setdefault(best_card, [0]*N_DAYS)
+                p["otd_daily"][best_card][t] += actual
+                p["otd_split"][line][t] = (round(1 - sl, 4), 0.0)
 
-                # Toplam üretim < toplam ihtiyaç mı? (overstock kontrolü)
-                produced_so_far = sum(p["otd_daily"].get(c, [0]*N_DAYS))
-                init_kso = p.get("init", {}).get(c, {}).get("o", 0)
-                # Eğer init + üretim > talep + güvenli marj ise atlanır
-                # Marj = 1 günlük talep (esnek alt sınır)
-                daily_demand = (asm_total[c] / N_DAYS) if N_DAYS else 0
-                if produced_so_far + init_kso >= asm_total[c] + daily_demand:
-                    continue  # overstock riski
+        # Slot 2: günlük toplam hâlâ alt bantın altında ise, slot1 dolu hatlara
+        # ikinci kart ekle (kapasite yarı yarıya bölünür).
+        if _daily_total(t) < DAILY_TOTAL_MIN:
+            for line in OTD_LINES:
+                if _daily_total(t) >= DAILY_TOTAL_MAX:
+                    break
+                if not p["otd_alloc"][line][t]:
+                    continue  # slot1 boş — slot2'ye anlam yok
+                if p["otd_alloc2"][line][t]:
+                    continue  # slot2 zaten dolu
 
-                # Setup ekstrası: dünkü atama farklıysa setup yaratır
-                prev_card = alloc_row[t-1] if t > 0 and t-1 < len(alloc_row) else ""
-                next_card = alloc_row[t+1] if t+1 < len(alloc_row) else ""
-                setup_penalty = 0
-                if prev_card and prev_card != c:
-                    setup_penalty += 1
-                if next_card and next_card != c:
-                    setup_penalty += 1
-                # XC↔XR zero-loss exception (Ensar memory)
-                if (prev_card, c) in [("XC","XR"),("XR","XC")] or (c, next_card) in [("XC","XR"),("XR","XC")]:
-                    setup_penalty = max(0, setup_penalty - 1)
+                slot1_card = p["otd_alloc"][line][t]
+                best2 = None
+                for c in SUS_CARDS:
+                    if c == slot1_card: continue
+                    res = _score_card(c, line, t, slot=2)
+                    if res is None: continue
+                    sc, prod = res
+                    if sc <= 0: continue
+                    # Setup loss slot1→slot2 geçişinde
+                    sl = setup_loss(slot1_card, c)
+                    if sl >= 1.0: continue  # tam kayıp → faydasız
+                    available = max(0.0, 1.0 - sl)
+                    half = available / 2.0
+                    real_prod = TEMPO.get(line, {}).get(c, 0) * half
+                    if _daily_total(t) + real_prod > DAILY_TOTAL_MAX * 1.05:
+                        continue
+                    if best2 is None or sc > best2[0]:
+                        best2 = (sc, c, real_prod, half)
+                if best2:
+                    _, c2, rprod, half = best2
+                    p["otd_alloc2"][line][t] = c2
+                    # Slot1 üretimini de yarıya indir
+                    slot1_tempo = TEMPO[line][slot1_card]
+                    prev_card = p["otd_alloc"][line][t-1] if t > 0 else ""
+                    sl_s1 = setup_loss(prev_card, slot1_card) if (prev_card and prev_card != slot1_card) else 0.0
+                    available_s1 = max(0.0, 1.0 - sl_s1)
+                    # Slot1 zaten tam üretmiş — yarıya çek
+                    full_s1 = int(slot1_tempo * available_s1)
+                    p["otd_daily"][slot1_card][t] -= full_s1
+                    half_s1 = int(slot1_tempo * (available_s1 / 2.0))
+                    p["otd_daily"][slot1_card][t] += half_s1
+                    # Slot2 üretimi ekle
+                    sl_s2 = setup_loss(slot1_card, c2)
+                    available_s2 = max(0.0, 1.0 - sl_s2)
+                    half_s2 = int(TEMPO[line][c2] * (available_s2 / 2.0))
+                    p["otd_daily"].setdefault(c2, [0]*N_DAYS)
+                    p["otd_daily"][c2][t] += half_s2
+                    p["otd_split"][line][t] = (round(available_s1 / 2.0, 4),
+                                                round(available_s2 / 2.0, 4))
 
-                # Skor: setup düşük + tempo yüksek + henüz açık ihtiyaç yüksek
-                need = max(0, asm_total[c] - produced_so_far - init_kso)
-                score = need - 5000 * setup_penalty + tempo * 0.1
-                candidates.append((score, c, tempo))
-
-            if not candidates:
-                continue
-            candidates.sort(reverse=True)
-            score, best_card, best_tempo = candidates[0]
-            if score <= 0:
-                continue  # atamaya değmez
-
-            # Atamayı uygula
-            alloc_row[t] = best_card
-            # Üretim ekle (setup loss varsa düş)
-            prev_card = alloc_row[t-1] if t > 0 else ""
-            sl = setup_loss(prev_card, best_card) if prev_card and prev_card != best_card else 0.0
-            produced = int(best_tempo * (1 - sl))
-            p["otd_daily"].setdefault(best_card, [0]*N_DAYS)
-            if t < len(p["otd_daily"][best_card]):
-                p["otd_daily"][best_card][t] += produced
-            changed = True
-
-        p["otd_alloc"][line] = alloc_row
-
-    if changed:
-        p = recalc_stocks(p)
+    # Stokları yeniden hesapla
+    p = recalc_stocks(p)
     return p
 
 
@@ -1591,6 +1698,17 @@ def _render_oncesonra_panel(ref_plan, new_plan, stage, lines=None, cards_for_rem
     else:
         before_setups = after_setups = alloc_diffs = 0
 
+    # v3.3: OTD için kart-bant ihlali (KSO ∉ [max_tempo×0.8, max_tempo×1.2])
+    band_viol_before = band_viol_after = 0
+    if stage == "OTD":
+        for c in (cards_for_rem or SUS_CARDS):
+            low, high = _card_stock_targets(c)
+            if low == 0 and high == 0: continue
+            for v in ref_plan.get("otd_rem", {}).get(c, []):
+                if v < low or v > high: band_viol_before += 1
+            for v in new_plan.get("otd_rem", {}).get(c, []):
+                if v < low or v > high: band_viol_after += 1
+
     # Üst özet kartları
     cards_html = '<div style="display:flex;gap:10px;flex-wrap:wrap;margin-bottom:14px;">'
     if alloc_key:
@@ -1598,6 +1716,8 @@ def _render_oncesonra_panel(ref_plan, new_plan, stage, lines=None, cards_for_rem
         cards_html += _summary_card("🔄 Değişen Hücre", 0, alloc_diffs, lower_is_better=False)
     cards_html += _summary_card("📈 Aşırı Stok (Overstock)", before_overstock, after_overstock, lower_is_better=True)
     cards_html += _summary_card("⚠️ Stok Açığı", before_deficit, after_deficit, lower_is_better=True)
+    if stage == "OTD":
+        cards_html += _summary_card("🎯 Bant Dışı Hücre (KSO)", band_viol_before, band_viol_after, lower_is_better=True)
     cards_html += '</div>'
     st.markdown(cards_html, unsafe_allow_html=True)
 
@@ -1621,7 +1741,11 @@ def _render_oncesonra_panel(ref_plan, new_plan, stage, lines=None, cards_for_rem
             if stage == "OTD":
                 st.markdown(make_alloc_compare(new_plan[alloc_key], ref_plan[alloc_key], lines,
                                                d_idx=DATE_INDICES,
-                                               rates_dict=new_plan.get("otd_rates", {})), unsafe_allow_html=True)
+                                               rates_dict=new_plan.get("otd_rates", {}),
+                                               alloc2_new=new_plan.get("otd_alloc2"),
+                                               split_new=new_plan.get("otd_split"),
+                                               alloc2_ref=ref_plan.get("otd_alloc2"),
+                                               split_ref=ref_plan.get("otd_split")), unsafe_allow_html=True)
             else:
                 st.markdown(make_alloc_compare(new_plan[alloc_key], ref_plan[alloc_key], lines,
                                                d_idx=DATE_INDICES,
@@ -2209,8 +2333,14 @@ def make_alloc(alloc_dict, lines, d_idx=None, rates_dict=None,
     h += '</tbody></table>'
     return h
 
-def make_alloc_compare(alloc_new, alloc_ref, lines, d_idx=None, rates_dict=None):
-    """İki alokasyon karşılaştırır; farklı hücreleri yeşil çerçeve ile işaretler."""
+def make_alloc_compare(alloc_new, alloc_ref, lines, d_idx=None, rates_dict=None,
+                       alloc2_new=None, split_new=None,
+                       alloc2_ref=None, split_ref=None):
+    """İki alokasyon karşılaştırır; farklı hücreleri yeşil çerçeve ile işaretler.
+
+    v3.2: alloc2_new/split_new verilirse her hat için ikinci slot satırı çizer
+    (referans tablodaki 2 slotlu görünüm gibi). alloc2_ref/split_ref karşılaştırma
+    içindir; yoksa boş kabul edilir."""
     idx = d_idx if d_idx is not None else list(range(N_DAYS))
     h = '<table class="otd-table"><thead><tr><th style="text-align:left;">Hat</th>'
     for i in idx: h += f'<th>{SUS_DAYS[i]}<br><span style="font-size:0.58rem;opacity:0.7">{SUS_DATES[i]}</span></th>'
@@ -2222,6 +2352,10 @@ def make_alloc_compare(alloc_new, alloc_ref, lines, d_idx=None, rates_dict=None)
         disp_new = rows_new if isinstance(rows_new[0], list) else [rows_new]
         disp_ref = rows_ref if (rows_ref and isinstance(rows_ref[0], list)) else [rows_ref] if rows_ref else [[""] * 14]
         rates = rates_dict.get(ln, [1]*N_DAYS) if rates_dict else None
+        # Slot2 satırı varsa burada hazırlanır
+        slot2_new_row = alloc2_new.get(ln, [""]*N_DAYS) if alloc2_new else None
+        slot2_ref_row = alloc2_ref.get(ln, [""]*N_DAYS) if alloc2_ref else None
+        split_new_row = split_new.get(ln, [(1.0, 0.0)]*N_DAYS) if split_new else None
         for ri, row in enumerate(disp_new):
             ref_row = disp_ref[ri] if ri < len(disp_ref) else [""] * 14
             h += f'<tr><td class="otd-rh">{ln if ri==0 else ""}</td>'
@@ -2232,14 +2366,40 @@ def make_alloc_compare(alloc_new, alloc_ref, lines, d_idx=None, rates_dict=None)
                 outline = "outline:2px solid #22c55e;outline-offset:-2px;" if diff else ""
                 if v:
                     bg = KART_RENKLERI.get(v,"#666")
-                    rate_val = rates[i] if rates and i < len(rates) else 1.0
+                    # Slot1 oranı: split varsa s1, yoksa rates
+                    if split_new_row and i < len(split_new_row):
+                        s1, s2 = split_new_row[i]
+                    else:
+                        s1, s2 = 1.0, 0.0
+                    rate_val = s1 if split_new_row else (rates[i] if rates and i < len(rates) else 1.0)
                     rate_html = ""
-                    if rates and rate_val < 1.0:
+                    if rate_val < 1.0:
                         pct = int(rate_val * 100)
                         rate_html = f'<span class="rate-sub" style="color:rgba(0,0,0,0.6);">%{pct}</span>'
                     h += f'<td style="background:{bg};color:#1e293b;font-weight:700;line-height:1.15;{outline}">{v}{rate_html}</td>'
                 else:
                     h += f'<td class="otd-none" style="{outline}">—</td>'
+            h += '</tr>'
+
+        # Slot 2 satırı (alloc2_new varsa ve içinde dolu hücre varsa)
+        if slot2_new_row and any(slot2_new_row):
+            h += f'<tr><td class="otd-rh" style="font-size:0.72rem;color:#94a3b8;">↳ slot2</td>'
+            for i in idx:
+                v2 = slot2_new_row[i] if i < len(slot2_new_row) else ""
+                ref_v2 = slot2_ref_row[i] if (slot2_ref_row and i < len(slot2_ref_row)) else ""
+                diff2 = v2 != ref_v2
+                outline2 = "outline:2px solid #22c55e;outline-offset:-2px;" if diff2 else ""
+                if v2:
+                    bg2 = KART_RENKLERI.get(v2, "#666")
+                    if split_new_row and i < len(split_new_row):
+                        _, s2 = split_new_row[i]
+                    else:
+                        s2 = 0.0
+                    pct2 = int(s2 * 100) if s2 < 1.0 else 100
+                    rate_html2 = f'<span class="rate-sub" style="color:rgba(0,0,0,0.6);">%{pct2}</span>'
+                    h += f'<td style="background:{bg2};color:#1e293b;font-weight:700;line-height:1.15;{outline2}">{v2}{rate_html2}</td>'
+                else:
+                    h += f'<td class="otd-none" style="{outline2}">—</td>'
             h += '</tr>'
     h += '</tbody></table>'
     return h
@@ -3252,11 +3412,26 @@ with tab_panel:
                     st.markdown("**📦 Kalan Stok — KSO**")
                     st.markdown(make_grid(sus["otd_rem"], "o", d_idx=DATE_INDICES), unsafe_allow_html=True)
                 else:
-                    st.caption("🟩 Yeşil çerçeve = referanstan farklı hücreler")
+                    st.caption("🟩 Yeşil çerçeve = referanstan farklı hücreler  •  ↳ slot2 = ikinci kart")
                     st.markdown("**Hat – Kart Alokasyonu (Optimize)**")
-                    st.markdown(make_alloc_compare(np["otd_alloc"], sus["otd_alloc"], OTD_LINES, d_idx=DATE_INDICES, rates_dict=sus.get("otd_rates",{})), unsafe_allow_html=True)
+                    st.markdown(make_alloc_compare(
+                        np["otd_alloc"], sus["otd_alloc"], OTD_LINES, d_idx=DATE_INDICES,
+                        rates_dict=sus.get("otd_rates",{}),
+                        alloc2_new=np.get("otd_alloc2"), split_new=np.get("otd_split"),
+                        alloc2_ref=sus.get("otd_alloc2"), split_ref=sus.get("otd_split"),
+                    ), unsafe_allow_html=True)
                     st.markdown("**Günlük Üretim (Optimize)**")
                     st.markdown(make_grid_plan(np["otd_daily"], sus["otd_daily"], d_idx=DATE_INDICES), unsafe_allow_html=True)
+                    # v3.3: Günlük toplam OTD üretimi bant göstergesi
+                    _daily_tot = [sum(np["otd_daily"].get(c, [0]*N_DAYS)[t] for c in SUS_CARDS) for t in range(N_DAYS)]
+                    _band_html = '<div style="margin:8px 0;display:flex;gap:6px;flex-wrap:wrap;font-size:0.78rem;">'
+                    _band_html += f'<span style="color:#94a3b8;">📊 Günlük OTD Toplamı (hedef bant {DAILY_TOTAL_MIN:,}–{DAILY_TOTAL_MAX:,}):</span>'
+                    for _t, _v in enumerate(_daily_tot):
+                        _in_band = DAILY_TOTAL_MIN <= _v <= DAILY_TOTAL_MAX
+                        _col = "#22c55e" if _in_band else ("#f59e0b" if _v < DAILY_TOTAL_MIN else "#ef4444")
+                        _band_html += f'<span style="color:{_col};font-weight:600;">G{_t+1}:{_v:,}</span>'
+                    _band_html += '</div>'
+                    st.markdown(_band_html, unsafe_allow_html=True)
                     st.markdown("**📦 Kalan Stok — KSO (Optimize)**")
                     st.markdown(make_grid_plan(np["otd_rem"], sus["otd_rem"], "o", d_idx=DATE_INDICES), unsafe_allow_html=True)
                 if proposals:
