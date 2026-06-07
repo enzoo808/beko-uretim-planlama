@@ -1294,52 +1294,32 @@ def run_optimization(current_plan):
 # YENİ — Bölüm Bazlı Yardımcı Fonksiyonlar
 # =====================================================================
 def run_stage_opt(plan, stage):
-    """Sadece belirtilen aşama (OTD/MD/TA) için optimizasyon çalıştırır."""
+    """Sadece belirtilen aşama (OTD/MD/TA) için optimizasyon çalıştırır.
+
+    Düzeltme 2026-06: new_plan artık optimizer'ın tam çıktısından doğrudan
+    alınır. Eski yaklaşım OTD alokasyon tablosunun boş görünmesine yol açıyordu.
+    """
     full = run_optimization(plan)
     stage_props = [p for p in full.get("proposals", []) if p["type"].startswith(stage)]
-    # Sadece bu aşamanın önerilerini uygula
+
+    opt_new = full.get("new_plan", plan)
     new_plan = copy.deepcopy(plan)
-    # Slot2 ve split alanlarını garantile
     new_plan.setdefault("otd_alloc2", {ln: [""]*N_DAYS for ln in OTD_LINES})
     new_plan.setdefault("otd_split",  {ln: [(1.0,0.0)]*N_DAYS for ln in OTD_LINES})
-    for p in stage_props:
-        c, d = p["card"], p["day"] - 1
-        if stage == "OTD":
-            slot = p.get("slot", 1)
-            line = p.get("line", "")
-            if p["type"] == "OTD üretim kes":
-                # Cut: alloc cell'i boşalt, daily'yi düşür
-                if line and line in new_plan["otd_alloc"]:
-                    if d < len(new_plan["otd_alloc"][line]):
-                        new_plan["otd_alloc"][line][d] = ""
-                new_plan["otd_daily"][c][d] = p["new"]
-            elif slot == 2:
-                # Slot2 atama
-                if line:
-                    a2 = new_plan["otd_alloc2"].setdefault(line, [""]*N_DAYS)
-                    if d < len(a2): a2[d] = c
-                    # Split güncelle
-                    s1card = new_plan["otd_alloc"].get(line, [""]*N_DAYS)[d] if d < len(new_plan["otd_alloc"].get(line, [])) else ""
-                    sl = setup_loss(s1card, c) if s1card else 0.0
-                    avail = max(0.0, 1.0 - sl)
-                    sp = new_plan["otd_split"].setdefault(line, [(1.0,0.0)]*N_DAYS)
-                    if d < len(sp): sp[d] = (avail/2.0, avail/2.0)
-                new_plan["otd_daily"][c][d] = p["new"]
-            else:
-                # Slot1 ekleme
-                new_plan["otd_daily"][c][d] = p["new"]
-                if line:
-                    alloc = new_plan["otd_alloc"].get(line, [""]*N_DAYS)
-                    if d < len(alloc): alloc[d] = c
-        elif stage == "MD":
-            new_plan["md_daily"][c][d] = p["new"]
-            if p.get("line"):
-                rows = new_plan["md_alloc"].get(p["line"], [])
-                for row in rows:
-                    if d < len(row) and row[d] == "":
-                        row[d] = c; break
-        elif stage == "TA":
-            new_plan["ta_daily"][c][d] = p["new"]
+
+    if stage == "OTD":
+        for key in ("otd_alloc", "otd_alloc2", "otd_split", "otd_daily", "otd_rates"):
+            if key in opt_new:
+                new_plan[key] = copy.deepcopy(opt_new[key])
+    elif stage == "MD":
+        for key in ("md_alloc", "md_daily", "md_rates"):
+            if key in opt_new:
+                new_plan[key] = copy.deepcopy(opt_new[key])
+    elif stage == "TA":
+        for key in ("ta_daily", "ta_fixture_usage"):
+            if key in opt_new:
+                new_plan[key] = copy.deepcopy(opt_new[key])
+
     new_plan = recalc_stocks(new_plan)
     rem_map = {"OTD": "otd_rem", "MD": "md_rem", "TA": "ta_rem"}
     remaining = sum(1 for c in SUS_CARDS for v in new_plan.get(rem_map[stage], {}).get(c, []) if v < 0)
@@ -2978,18 +2958,18 @@ with tab_panel:
                 st.caption("🔴 Negatif = stok açığı")
                 st.markdown(make_grid(sus["otd_rem"], "o", d_idx=DATE_INDICES, highlight=hl), unsafe_allow_html=True)
 
-            with ot2:
+with ot2:
                 st.markdown(f"**{otd_res['message']}**")
                 proposals = otd_res.get("proposals", [])
+                # Tablolar her zaman gösterilir — proposals boş olsa dahi
+                st.caption("🟩 Yeşil çerçeve = referanstan farklı hücreler")
+                st.markdown("**Hat – Kart Alokasyonu (Optimize)**")
+                st.markdown(make_alloc_compare(np["otd_alloc"], sus["otd_alloc"], OTD_LINES, d_idx=DATE_INDICES, rates_dict=sus.get("otd_rates",{})), unsafe_allow_html=True)
+                st.markdown("**Günlük Üretim (Optimize)**")
+                st.markdown(make_grid_plan(np["otd_daily"], sus["otd_daily"], d_idx=DATE_INDICES), unsafe_allow_html=True)
+                st.markdown("**📦 Kalan Stok — KSO (Optimize)**")
+                st.markdown(make_grid_plan(np["otd_rem"], sus["otd_rem"], "o", d_idx=DATE_INDICES), unsafe_allow_html=True)
                 if proposals:
-                    st.caption("🟩 Yeşil çerçeve = referanstan farklı hücreler")
-                    st.markdown("**Hat – Kart Alokasyonu (Optimize)**")
-                    st.markdown(make_alloc_compare(np["otd_alloc"], sus["otd_alloc"], OTD_LINES, d_idx=DATE_INDICES, rates_dict=sus.get("otd_rates",{})), unsafe_allow_html=True)
-                    st.markdown("**Günlük Üretim (Optimize)**")
-                    st.markdown(make_grid_plan(np["otd_daily"], sus["otd_daily"], d_idx=DATE_INDICES), unsafe_allow_html=True)
-                    st.markdown("**📦 Kalan Stok — KSO (Optimize)**")
-                    st.markdown(make_grid_plan(np["otd_rem"], sus["otd_rem"], "o", d_idx=DATE_INDICES), unsafe_allow_html=True)
-
                     st.markdown("---")
                     st.markdown("**📋 Değişiklik Önerileri:**")
                     approvals_otd = {}
@@ -3007,7 +2987,6 @@ with tab_panel:
                             )
                         with pc2:
                             approvals_otd[i] = st.checkbox("✓", value=True, key=f"otd_appr_{i}")
-
                     ac1, ac2 = st.columns([2, 2])
                     with ac1:
                         if st.button("✅ Seçilen OTD Değişikliklerini Uygula",
@@ -3024,7 +3003,7 @@ with tab_panel:
                             st.session_state.otd_opt_res = None
                             st.rerun()
                 else:
-                    st.success("✅ Mevcut OTD planında ihlal yok.")
+                    st.info("ℹ️ Önerilen değişiklik yok — plan zaten optimal veya kapasite sınırına ulaşıldı.")
                     if st.button("Tamam", key="otd_ok_btn"):
                         st.session_state.otd_opt_res = None
                         st.rerun()
@@ -3346,13 +3325,13 @@ with tab_panel:
             with mt2:
                 st.markdown(f"**{md_res['message']}**")
                 proposals = md_res.get("proposals", [])
+                # Tablolar her zaman gösterilir
+                st.caption("🟩 Yeşil çerçeve = referanstan farklı hücreler")
+                st.markdown("**Günlük Üretim (Optimize)**")
+                st.markdown(make_grid_plan(np["md_daily"], sus["md_daily"], d_idx=DATE_INDICES), unsafe_allow_html=True)
+                st.markdown("**📦 Kalan Stok — KSM (Optimize)**")
+                st.markdown(make_grid_plan(np["md_rem"], sus["md_rem"], "m", d_idx=DATE_INDICES), unsafe_allow_html=True)
                 if proposals:
-                    st.caption("🟩 Yeşil çerçeve = referanstan farklı hücreler")
-                    st.markdown("**Günlük Üretim (Optimize)**")
-                    st.markdown(make_grid_plan(np["md_daily"], sus["md_daily"], d_idx=DATE_INDICES), unsafe_allow_html=True)
-                    st.markdown("**📦 Kalan Stok — KSM (Optimize)**")
-                    st.markdown(make_grid_plan(np["md_rem"], sus["md_rem"], "m", d_idx=DATE_INDICES), unsafe_allow_html=True)
-
                     st.markdown("---")
                     st.markdown("**📋 Değişiklik Önerileri:**")
                     approvals_md = {}
@@ -3370,7 +3349,6 @@ with tab_panel:
                             )
                         with pc2:
                             approvals_md[i] = st.checkbox("✓", value=True, key=f"md_appr_{i}")
-
                     mc1, mc2 = st.columns([2, 2])
                     with mc1:
                         if st.button("✅ Seçilen MD Değişikliklerini Uygula",
@@ -3387,7 +3365,7 @@ with tab_panel:
                             st.session_state.md_opt_res = None
                             st.rerun()
                 else:
-                    st.success("✅ Mevcut MD planında ihlal yok.")
+                    st.info("ℹ️ Önerilen değişiklik yok — plan zaten optimal veya kapasite sınırına ulaşıldı.")
                     if st.button("Tamam", key="md_ok_btn"):
                         st.session_state.md_opt_res = None
                         st.rerun()
@@ -3634,13 +3612,13 @@ with tab_panel:
             with tt2:
                 st.markdown(f"**{ta_res['message']}**")
                 proposals = ta_res.get("proposals", [])
+                # Tablolar her zaman gösterilir
+                st.caption("🟩 Yeşil çerçeve = referanstan farklı hücreler")
+                st.markdown("**Günlük Üretim (Optimize)**")
+                st.markdown(make_grid_plan(np["ta_daily"], sus["ta_daily"], d_idx=DATE_INDICES), unsafe_allow_html=True)
+                st.markdown("**📦 Kalan Stok — KST (Optimize)**")
+                st.markdown(make_grid_plan(np["ta_rem"], sus["ta_rem"], "t", d_idx=DATE_INDICES), unsafe_allow_html=True)
                 if proposals:
-                    st.caption("🟩 Yeşil çerçeve = referanstan farklı hücreler")
-                    st.markdown("**Günlük Üretim (Optimize)**")
-                    st.markdown(make_grid_plan(np["ta_daily"], sus["ta_daily"], d_idx=DATE_INDICES), unsafe_allow_html=True)
-                    st.markdown("**📦 Kalan Stok — KST (Optimize)**")
-                    st.markdown(make_grid_plan(np["ta_rem"], sus["ta_rem"], "t", d_idx=DATE_INDICES), unsafe_allow_html=True)
-
                     st.markdown("---")
                     approvals_ta = {}
                     for i, p in enumerate(proposals):
@@ -3655,7 +3633,6 @@ with tab_panel:
                             )
                         with pc2:
                             approvals_ta[i] = st.checkbox("✓", value=True, key=f"ta_appr_{i}")
-
                     tc1, tc2 = st.columns([2, 2])
                     with tc1:
                         if st.button("✅ Seçilen TA Değişikliklerini Uygula",
@@ -3672,7 +3649,7 @@ with tab_panel:
                             st.session_state.ta_opt_res = None
                             st.rerun()
                 else:
-                    st.success("✅ Mevcut TA planında ihlal yok.")
+                    st.info("ℹ️ Önerilen değişiklik yok — plan zaten optimal veya kapasite sınırına ulaşıldı.")
                     if st.button("Tamam", key="ta_ok_btn"):
                         st.session_state.ta_opt_res = None
                         st.rerun()
