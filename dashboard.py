@@ -1325,18 +1325,17 @@ def run_stage_opt(plan, stage):
     new_plan.setdefault("otd_alloc2", {ln: [""]*N_DAYS for ln in OTD_LINES})
     new_plan.setdefault("otd_split",  {ln: [(1.0,0.0)]*N_DAYS for ln in OTD_LINES})
 
-    if stage == "OTD":
-        for key in ("otd_alloc", "otd_alloc2", "otd_split", "otd_daily", "otd_rates"):
-            if key in opt_new:
-                new_plan[key] = copy.deepcopy(opt_new[key])
-    elif stage == "MD":
-        for key in ("md_alloc", "md_daily", "md_rates"):
-            if key in opt_new:
-                new_plan[key] = copy.deepcopy(opt_new[key])
-    elif stage == "TA":
-        for key in ("ta_daily", "ta_fixture_usage"):
-            if key in opt_new:
-                new_plan[key] = copy.deepcopy(opt_new[key])
+    # v3.3 FIX: Daha önce sadece stage'e özel anahtarlar kopyalanıyordu. Bu KSO/KSM/KST
+    # hesabını bozuyordu çünkü recalc_stocks "cum_otd - cum_md (veya ta)" formülünü
+    # kullanır. Yeni OTD üretimi ile eski MD/TA tüketimi birleşince KSO yanlış çıkıyordu.
+    # Çözüm: stage hangisi olursa olsun, optimize çıktısındaki TÜM üretim/atama
+    # anahtarlarını yeni plana aktar — böylece recalc_stocks doğru çalışır.
+    _all_keys = ("otd_alloc", "otd_alloc2", "otd_split", "otd_daily", "otd_rates",
+                 "md_alloc", "md_daily", "md_rates",
+                 "ta_daily", "ta_fixture_usage")
+    for key in _all_keys:
+        if key in opt_new:
+            new_plan[key] = copy.deepcopy(opt_new[key])
 
     new_plan = recalc_stocks(new_plan)
     rem_map = {"OTD": "otd_rem", "MD": "md_rem", "TA": "ta_rem"}
