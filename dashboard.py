@@ -1267,7 +1267,7 @@ except Exception as _e:
 
 
 def run_optimization(current_plan):
-    """Drop-in replacement: hibrit motor (SCIP + CBC). Greedy fallback opsiyonel."""
+    """Drop-in replacement: hibrit motor (OR-Tools/CBC + PuLP/CBC). Greedy fallback opsiyonel."""
     if _HYBRID_AVAILABLE:
         return _hybrid_run(
             current_plan=current_plan,
@@ -1282,6 +1282,11 @@ def run_optimization(current_plan):
             ta_adet=TA_ADET_DEFAULT,
             recalc_fn=recalc_stocks,
             time_limit_sec=60,
+            # v3.3: Bant kısıtları (Ensar talebi)
+            daily_total_min=DAILY_TOTAL_MIN,
+            daily_total_max=DAILY_TOTAL_MAX,
+            stock_band_low_ratio=STOCK_BAND_LOW,
+            stock_band_high_ratio=STOCK_BAND_HIGH,
         )
     # Fallback
     res = run_optimization_legacy_greedy(current_plan)
@@ -1296,10 +1301,23 @@ def run_optimization(current_plan):
 def run_stage_opt(plan, stage):
     """Sadece belirtilen aşama (OTD/MD/TA) için optimizasyon çalıştırır.
 
-    Düzeltme 2026-06: new_plan artık optimizer'ın tam çıktısından doğrudan
-    alınır. Eski yaklaşım OTD alokasyon tablosunun boş görünmesine yol açıyordu.
+    v3.3: Optimizer INFEASIBLE dönerse status='infeasible' iletilir; bant
+    veya talep ayarlanması için kullanıcıya net bir mesaj gider.
     """
     full = run_optimization(plan)
+
+    # v3.3: Infeasibility erken yakalama — Faz 2 negatif KSO=0 sağlayamadıysa
+    if full.get("status") == "infeasible":
+        return {
+            "status": "infeasible",
+            "proposals": [],
+            "new_plan": plan,
+            "remaining": -1,
+            "message": full.get("message",
+                "⚠️ Çözücü fizibil çözüm bulamadı — talep mevcut kapasiteyle karşılanamıyor."),
+            "suggestions": full.get("suggestions", []),
+        }
+
     stage_props = [p for p in full.get("proposals", []) if p["type"].startswith(stage)]
 
     opt_new = full.get("new_plan", plan)
@@ -3056,13 +3074,15 @@ with tab_panel:
                          use_container_width=True, key="btn_otd_exp"):
                 with optimize_overlay("OTD analiz ve optimize ediliyor", est_seconds=60):
                     _res_otd = run_stage_opt(sus, "OTD")
-                    # v3.2: Hibrit motor lazy-fill yapar. Boş hat-gün hücrelerini
-                    # Tempolar + overstock kontrolüne göre eager doldur.
-                    try:
-                        _res_otd["new_plan"] = eager_fill_otd_allocation(_res_otd["new_plan"], ref_plan=sus)
-                    except Exception as _e:
-                        pass  # eager fill başarısızsa orijinal sonuç korunur
+                    # v3.3: Eager fill kaldırıldı — optimizer her şeyi yapıyor.
+                    # Faz 2 artık bant + stok hedefi + günlük üretim min/max
+                    # kısıtlarını kendisi çözüyor.
                     st.session_state.otd_opt_res = _res_otd
+                    # Infeasibility durumunda kullanıcı uyarısı için bayrak
+                    if _res_otd.get("status") in ("infeasible", "error"):
+                        st.session_state.otd_infeasible_msg = _res_otd.get("message", "")
+                    else:
+                        st.session_state.otd_infeasible_msg = ""
                 st.rerun()
 
         # ── İçerik: referans tek görünüm VEYA öncesi/sonrası ──
@@ -3395,7 +3415,19 @@ with tab_panel:
                 st.markdown(make_grid(sus["otd_rem"], "o", d_idx=DATE_INDICES, highlight=hl), unsafe_allow_html=True)
 
             with ot2:
-                st.markdown(f"**{otd_res['message']}**")
+                # v3.3: Infeasibility uyarısı (Faz 2 negatif KSO=0 sağlayamadıysa)
+                _otd_infeas = (otd_res.get("status") == "infeasible")
+                if _otd_infeas:
+                    st.error(f"❌ **{otd_res['message']}**")
+                    if otd_res.get("suggestions"):
+                        st.markdown("**🔧 Öneriler:**")
+                        for _sug in otd_res["suggestions"]:
+                            st.markdown(_sug)
+                    if st.button("Tamam (kapat)", key="otd_infeas_btn"):
+                        st.session_state.otd_opt_res = None
+                        st.rerun()
+                else:
+                    st.markdown(f"**{otd_res['message']}**")
                 proposals = otd_res.get("proposals", [])
                 # v3.2 FIX: "Önerilen değişiklik yok" mesajıyla görsel çelişmesin diye —
                 # proposals boş VE alokasyon/KSO referansla özdeşse referans tablosu çizilir.
