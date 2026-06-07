@@ -1,5 +1,5 @@
 """
-phase1_ortools.py — Hibrit Çözücü FAZ 1 (OR-Tools / SCIP)
+phase1_ortools.py — Hibrit Çözücü FAZ 1 (OR-Tools / CBC)
 ==========================================================
 Görev   : Kombinatoryal atama ve setup minimizasyonu.
 Çıktı   : yO, zO, yM, zM (ikili kararlar)
@@ -8,11 +8,25 @@ Görev   : Kombinatoryal atama ve setup minimizasyonu.
 Bu faz, OR-Tools'un güçlü olduğu yere odaklanır:
   - Çok ikili değişken, BoolVar tabanlı atama
   - Setup tespiti (sequence-independent)
-  - SCIP'in branch-and-cut hızı
+  - branch-and-cut hızı (CBC)
 Bu fazda üretim miktarları (xO, xM, xT) ve stoklar (KSO, KSM, KST)
 de modelin içindedir, çünkü atamaların FİZİBİL olduğunu doğrulamak
-gerekir; ama amaç fonksiyonunda yalnızca SETUP cezalandırılır.
+gerekir; ama amaç fonksiyonunda yalnızca OTD SETUP cezalandırılır.
 Buffer ağırlığı 0 → Faz 1 buffer'a kayıtsız, sadece setup düşürür.
+
+────────────────────────────────────────────────────────────────────
+2026-06 DÜZELTMELERİ (tez ile tutarlılık):
+  • MD kurulum kaybı KALDIRILDI → S_MD = 0.0
+    Gerekçe: Tez Bölüm 3.6.3 Kısıt (16): "MD slotları arasındaki
+    geçişte kurulum kaybı modele alınmaz." (operatör seviyesi geçiş)
+  • Amaç fonksiyonu YALNIZCA OTD setup'ı minimize eder → min Σ zO
+    Gerekçe: Tez Bölüm 3.5: "Birinci ölçüt OTD aşamasında yapılan
+    toplam kart değişimi sayısıdır." (sonuc.json: 7 setup, hepsi OTD;
+    MD değişimleri serbest "md_onarim" kararlarıdır, cezalandırılmaz.)
+  • Hata mesajı düzeltildi (çözücü CBC, SCIP değil).
+  • zM ikili değişkenleri KORUNDU → dashboard "MD Setup Geçişleri"
+    raporlaması için; ancak amaca ve kapasiteye etki etmez.
+────────────────────────────────────────────────────────────────────
 
 Yazar   : Mehmet Ensar & Ege — YTÜ Endüstri Müh. Bitirme Projesi
 """
@@ -21,14 +35,14 @@ from __future__ import annotations
 from ortools.linear_solver import pywraplp
 from typing import Any
 
-S_OTD = 0.50   # OTD setup kapasite kaybı (%50)
-S_MD  = 0.05   # MD  setup kapasite kaybı (%5)
+S_OTD = 0.50   # OTD setup kapasite kaybı (%50) — Tez Bölüm 3.6.1
+S_MD  = 0.0    # MD setup kaybı YOK — Tez Kısıt (16). (Eski hatalı değer: 0.05)
 
 
 def solve_phase1(data: dict[str, Any],
                  time_limit_sec: int = 60) -> dict[str, Any]:
     """
-    Faz 1: yalnızca toplam setup'ı (OTD + MD) minimize eder.
+    Faz 1: yalnızca toplam OTD setup'ını minimize eder.
     Atamaları (yO, zO, yM, zM) ve bunlardan türeyen OTD üretim ifadesini
     Faz 2'ye iletir. Tampon stoklar bu fazda da hesaplanır ama amaca girmez.
     """
@@ -50,7 +64,7 @@ def solve_phase1(data: dict[str, Any],
 
     solver = pywraplp.Solver.CreateSolver("CBC")
     if not solver:
-        return {"status": "ERROR", "message": "SCIP yüklenemedi."}
+        return {"status": "ERROR", "message": "CBC çözücü yüklenemedi."}
     solver.SetTimeLimit(time_limit_sec * 1000)
     solver.SetRelativeMipGap(0.01)
     inf = solver.infinity()
@@ -134,7 +148,7 @@ def solve_phase1(data: dict[str, Any],
             if t == 0:
                 for k in K_MD:
                     if (k, m, 0) in yM:
-                        solver.Add(zM[m, 0] >= yM[k, m, 0])    # (P1.5) MD setup tespiti
+                        solver.Add(zM[m, 0] >= yM[k, m, 0])    # (P1.5) MD setup tespiti (yalnızca raporlama)
             else:
                 for k in K_MD:
                     if (k, m, t) in yM:
@@ -145,14 +159,18 @@ def solve_phase1(data: dict[str, Any],
                             solver.Add(zM[m, t] >= yM[k, m, t])
 
     for (k, m, t), var in pM.items():
-        solver.Add(var <= tempo_md[(k, m)] * yM[k, m, t])      # (P1.6) MD üretim ≤ tempo·yM
+        solver.Add(var <= tempo_md[(k, m)] * yM[k, m, t])      # (P1.6) MD üretim ≤ tempo·yM (atanmamış kart → 0)
 
+    # (P1.7) MD hat günlük kapasite tavanı.
+    # NOT: S_MD = 0 olduğu için bu kısıt artık SETUP KAYBI içermez; yalnızca
+    # düz kapasite tavanıdır ve P1.6 + P1.4 tarafından zaten örtülür (gereksiz
+    # ama zararsız geçerli eşitsizlik). Tez Kısıt (16): MD'de kurulum kaybı yok.
     for m in L_MD:
         for t in days:
             prods = [pM[k, m, t] for k in K_MD if (k, m, t) in pM]
             if prods:
                 max_md = max(tempo_md.get((kk, m), 0) for kk in K_MD)
-                solver.Add(sum(prods) <= max_md * (1 - S_MD * zM[m, t]))   # (P1.7) MD setup kaybı
+                solver.Add(sum(prods) <= max_md * (1 - S_MD * zM[m, t]))
 
     # --- OTD deterministik üretim ifadesi ---
     def otd_prod(k, t):
@@ -186,10 +204,10 @@ def solve_phase1(data: dict[str, Any],
             prev = KST[k, t-1] if t > 0 else init_kst.get(k, 0)
             solver.Add(KST[k, t] == prev + pT[k, t] - demand.get((k, t), 0))   # (P1.10) KST denge
 
-    # --- AMAÇ FONKSİYONU (FAZ 1): yalnızca setup ---
+    # --- AMAÇ FONKSİYONU (FAZ 1): yalnızca OTD setup ---
     total_otd_z = sum(zO[l, t] for l in L_OTD for t in days)
-    total_md_z  = sum(zM[m, t] for m in L_MD  for t in days)
-    solver.Minimize(total_otd_z + total_md_z)                             # (P1.OBJ) min Σ setup
+    total_md_z  = sum(zM[m, t] for m in L_MD  for t in days)   # raporlama amaçlı; amaca DAHİL DEĞİL
+    solver.Minimize(total_otd_z)                               # (P1.OBJ) min Σ zO — Tez Bölüm 3.5
 
     status = solver.Solve()
     if status not in (pywraplp.Solver.OPTIMAL, pywraplp.Solver.FEASIBLE):
@@ -211,9 +229,10 @@ def solve_phase1(data: dict[str, Any],
 
     return {
         "status": smap.get(status, "UNKNOWN"),
+        # Amaç değeri = OTD setup sayısı (MD artık cezalandırılmıyor)
         "phase1_setups": int(round(solver.Objective().Value())),
         "phase1_otd_setups": len(zO_fixed),
-        "phase1_md_setups":  len(zM_fixed),
+        "phase1_md_setups":  len(zM_fixed),   # raporlama (serbest MD değişimleri)
         "phase1_solve_time": round(solver.wall_time() / 1000, 2),
         "phase1_num_vars":   solver.NumVariables(),
         "phase1_num_cons":   solver.NumConstraints(),
