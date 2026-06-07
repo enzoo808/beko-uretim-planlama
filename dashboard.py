@@ -2958,7 +2958,7 @@ with tab_panel:
                 st.caption("🔴 Negatif = stok açığı")
                 st.markdown(make_grid(sus["otd_rem"], "o", d_idx=DATE_INDICES, highlight=hl), unsafe_allow_html=True)
 
-with ot2:
+            with ot2:
                 st.markdown(f"**{otd_res['message']}**")
                 proposals = otd_res.get("proposals", [])
                 # Tablolar her zaman gösterilir — proposals boş olsa dahi
