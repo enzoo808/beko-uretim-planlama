@@ -1281,7 +1281,7 @@ def run_optimization(current_plan):
             ta_fikstur=TA_FIKSTUR_DEFAULT,
             ta_adet=TA_ADET_DEFAULT,
             recalc_fn=recalc_stocks,
-            time_limit_sec=60,
+            time_limit_sec=30,
             # v3.3: Bant kısıtları (Ensar talebi)
             daily_total_min=DAILY_TOTAL_MIN,
             daily_total_max=DAILY_TOTAL_MAX,
