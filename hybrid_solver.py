@@ -12,32 +12,37 @@ def solve(data: dict[str, Any],
           time_limit_sec: int = 120,
           daily_total_min: float = 2600.0,
           daily_total_max: float = 9999.0,
-          stock_band_low_ratio: float = 0.80,
-          stock_band_high_ratio: float = 1.20) -> dict[str, Any]:
+          stock_band_low: float = 0.80,
+          stock_band_high: float = 1.20,
+          # Geri uyumluluk
+          stock_band_low_ratio: float = None,
+          stock_band_high_ratio: float = None) -> dict[str, Any]:
     """
-    Hibrit cozum. Toplam time_limit'i iki faza bolusturu:
+    Hibrit cozum. Toplam time_limit'i iki faza bolusturur:
       Faz 1 (atama, setup minimize): %80
       Faz 2 (buffer + bant min):     %20
 
-    daily_total_max varsayilan 9999 -- Faz 1'de ust sinir YOK.
-    Gercek Beko verisi 5000-6000/gun gerektiriyor; 3100 tavani her
-    senaryoyu infeasible yapiyordu. Ust bant yalnizca Faz 2 soft
-    amac fonksiyonuyla yaklasik olarak kontrol edilir.
+    Faz 1'in mevcut imzasi daily_total_min/max kabul etmiyor — bu yuzden
+    Faz 1'e bunlari iletmiyoruz. Faz 1 dogal olarak KSO/KSM/KST >= 0
+    hard kisitlariyla kart atamasini zorlar. Faz 2 ise bandi soft olarak
+    optimize eder.
     """
+    if stock_band_low_ratio  is not None: stock_band_low  = stock_band_low_ratio
+    if stock_band_high_ratio is not None: stock_band_high = stock_band_high_ratio
+
     t1 = max(30, int(time_limit_sec * 0.80))
     t2 = max(20, time_limit_sec - t1)
 
-    r1 = solve_phase1(data, time_limit_sec=t1,
-                      daily_total_min=daily_total_min,
-                      daily_total_max=daily_total_max)
+    # FAZ 1: Kullanicinin orijinal imzasi ile cagrilir
+    r1 = solve_phase1(data, time_limit_sec=t1)
     if r1["status"] in ("INFEASIBLE", "ERROR"):
         return r1
 
     r2 = solve_phase2(data, phase1_result=r1, time_limit_sec=t2,
                       daily_total_min=daily_total_min,
                       daily_total_max=daily_total_max,
-                      stock_band_low_ratio=stock_band_low_ratio,
-                      stock_band_high_ratio=stock_band_high_ratio)
+                      stock_band_low=stock_band_low,
+                      stock_band_high=stock_band_high)
     if r2["status"] in ("INFEASIBLE", "ERROR"):
         return {"status": "INFEASIBLE",
                 "message": r2.get("message",
@@ -65,7 +70,7 @@ def solve(data: dict[str, Any],
         "total_buffer":      r2["phase2_buffer"],
         "band_violation":    r2.get("phase2_band_violation", 0),
         "daily_under":       r2.get("phase2_daily_under", 0),
-        "phase1_band_under": r1.get("phase1_band_total_under", 0),
+        "daily_over":        r2.get("phase2_daily_over", 0),
         "solve_time_sec":    round(r1["phase1_solve_time"] + r2["phase2_solve_time"], 2),
         "phase1_solver":     "OR-Tools pywraplp / CBC",
         "phase1_setups":     r1["phase1_setups"],
