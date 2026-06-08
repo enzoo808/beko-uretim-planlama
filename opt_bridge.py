@@ -231,7 +231,7 @@ def run_optimization_hybrid(current_plan, sus_cards, otd_lines, tempo, process_m
     phase1_t = result.get("phase1_time", "—")
     phase2_t = result.get("phase2_time", "—")
     msg = (f"Hibrit motor çözdü — Setup: {setup_count}, Tampon: {buffer_total:,} | "
-           f"Faz1 (SCIP) {phase1_t}s + Faz2 (CBC) {phase2_t}s | "
+           f"Faz1 (OR-Tools/CBC) {phase1_t}s + Faz2 (PuLP/CBC) {phase2_t}s | "
            f"{len(proposals)} değişiklik önerisi")
 
     status = "optimal" if (result["status"] == "OPTIMAL" and remaining == 0) else \
@@ -244,7 +244,7 @@ def run_optimization_hybrid(current_plan, sus_cards, otd_lines, tempo, process_m
         suggestions.append("✅ Hibrit motor tüm kısıtları sağlayan plan üretti")
     suggestions.append(f"📈 OTD setup: {result.get('otd_setups', '—')} | "
                        f"MD setup: {result.get('md_setups', '—')}")
-    suggestions.append("📈 Çözücü: Faz 1 OR-Tools/SCIP + Faz 2 PuLP/CBC")
+    suggestions.append("📈 Çözücü: Faz 1 OR-Tools pywraplp/CBC + Faz 2 PuLP/CBC")
 
     return {
         "status": status, "message": msg, "proposals": proposals,
