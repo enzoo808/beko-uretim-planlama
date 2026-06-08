@@ -36,13 +36,15 @@ def solve(data: dict[str, Any],
           stock_band_high_ratio: float = 1.20) -> dict[str, Any]:
     """
     Hibrit çözüm. Toplam time_limit'i iki faza bölüştürür:
-      Faz 1 (atama, setup minimize)  : %85
-      Faz 2 (buffer + bant + günlük min): %15
+      Faz 1 (atama, setup minimize + band kısıtı): %60
+      Faz 2 (buffer + bant + günlük min):          %40
     """
-    t1 = max(30, int(time_limit_sec * 0.85))
+    t1 = max(30, int(time_limit_sec * 0.60))
     t2 = max(30, time_limit_sec - t1)
 
-    r1 = solve_phase1(data, time_limit_sec=t1)
+    r1 = solve_phase1(data, time_limit_sec=t1,
+                      daily_total_min=daily_total_min,
+                      daily_total_max=daily_total_max)
     if r1["status"] in ("INFEASIBLE", "ERROR"):
         return r1
 
@@ -80,6 +82,7 @@ def solve(data: dict[str, Any],
         "total_buffer":   r2["phase2_buffer"],
         "band_violation": r2.get("phase2_band_violation", 0),
         "daily_under":    r2.get("phase2_daily_under", 0),
+        "phase1_band_under": r1.get("phase1_band_total_under", 0),
         "solve_time_sec": round(r1["phase1_solve_time"] + r2["phase2_solve_time"], 2),
         # Faz-bazlı detay (dashboard'da gösterilebilir)
         "phase1_solver":  "OR-Tools pywraplp / CBC",
