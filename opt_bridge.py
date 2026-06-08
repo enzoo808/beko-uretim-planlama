@@ -172,16 +172,22 @@ def run_optimization_hybrid(current_plan, sus_cards, otd_lines, tempo, process_m
                             sus_dates, n_days, md_tempo=None, ta_fikstur=None,
                             ta_adet=None, recalc_fn=None, time_limit_sec=120,
                             daily_total_min=2600.0, daily_total_max=9999.0,
-                            stock_band_low_ratio=0.80, stock_band_high_ratio=1.20):
+                            stock_band_low=0.80, stock_band_high=1.20,
+                            # Geri uyumluluk: eski _ratio adları da kabul
+                            stock_band_low_ratio=None, stock_band_high_ratio=None):
     """dashboard.py'dan çağrılır. Sabitler parametre olarak gelir — import dashboard YOK."""
+    # Eski isimleri yenisi ile birleştir (geriye uyumluluk)
+    if stock_band_low_ratio  is not None: stock_band_low  = stock_band_low_ratio
+    if stock_band_high_ratio is not None: stock_band_high = stock_band_high_ratio
+
     data = _plan_to_data(current_plan, sus_cards, otd_lines, tempo,
                          md_tempo, ta_fikstur, ta_adet, n_days, process_map)
     try:
         result = hybrid_solve(data, time_limit_sec=time_limit_sec,
                               daily_total_min=daily_total_min,
                               daily_total_max=daily_total_max,
-                              stock_band_low_ratio=stock_band_low_ratio,
-                              stock_band_high_ratio=stock_band_high_ratio)
+                              stock_band_low=stock_band_low,
+                              stock_band_high=stock_band_high)
     except Exception as e:
         return {
             "status": "error",
