@@ -30,8 +30,8 @@ def solve(data: dict[str, Any],
     if stock_band_low_ratio  is not None: stock_band_low  = stock_band_low_ratio
     if stock_band_high_ratio is not None: stock_band_high = stock_band_high_ratio
 
-    t1 = max(30, int(time_limit_sec * 0.80))
-    t2 = max(20, time_limit_sec - t1)
+    t1 = max(20, int(time_limit_sec * 0.75))
+    t2 = max(8,  time_limit_sec - t1)
 
     # FAZ 1: Kullanicinin orijinal imzasi ile cagrilir
     r1 = solve_phase1(data, time_limit_sec=t1)
