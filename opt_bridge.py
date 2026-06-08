@@ -171,7 +171,7 @@ def _result_to_proposals(plan_before, result, sus_cards, otd_lines, n_days, sus_
 def run_optimization_hybrid(current_plan, sus_cards, otd_lines, tempo, process_map,
                             sus_dates, n_days, md_tempo=None, ta_fikstur=None,
                             ta_adet=None, recalc_fn=None, time_limit_sec=120,
-                            daily_total_min=2600.0, daily_total_max=3100.0,
+                            daily_total_min=2600.0, daily_total_max=9999.0,
                             stock_band_low_ratio=0.80, stock_band_high_ratio=1.20):
     """dashboard.py'dan çağrılır. Sabitler parametre olarak gelir — import dashboard YOK."""
     data = _plan_to_data(current_plan, sus_cards, otd_lines, tempo,
