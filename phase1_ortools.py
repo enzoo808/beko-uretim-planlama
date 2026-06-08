@@ -74,7 +74,6 @@ def solve_phase1(data: dict[str, Any],
     if not solver:
         return {"status": "ERROR", "message": "CBC çözücü yüklenemedi."}
     solver.SetTimeLimit(time_limit_sec * 1000)
-    solver.SetRelativeMipGap(0.01)
     inf = solver.infinity()
 
     # ─── OTD ikili değişkenleri ───────────────────────────────────────────────
