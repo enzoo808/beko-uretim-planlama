@@ -1252,7 +1252,7 @@ def run_optimization_legacy_greedy(current_plan):
             "remaining_violations": remaining, "suggestions": suggestions, "message": msg}
 
 # =====================================================================
-# HİBRİT OPTİMİZASYON MOTORU (Faz 1 OR-Tools/SCIP + Faz 2 PuLP/CBC)
+# HİBRİT OPTİMİZASYON MOTORU (Faz 1 OR-Tools pywraplp/CBC + Faz 2 PuLP/CBC)
 # =====================================================================
 # Aşağıdaki run_optimization() wrapper'ı opt_bridge.run_optimization_hybrid'i
 # çağırır. opt_bridge `import dashboard` YAPMAZ — sabitler buradan parametre
@@ -3115,7 +3115,7 @@ with tab_panel:
                 with st.expander("🤖 Optimize Önerisi (hangi kart nereye atanmalı?)", expanded=False):
                     st.caption("Hibrit motoru çalıştırıp OTD için kart atama önerilerini görmek için aşağıdaki butona basın (60-120 saniye sürer).")
                     if st.button("🔄 OTD önerilerini hesapla", key="btn_ref_otd_compute"):
-                        with optimize_overlay("Hibrit motor çalışıyor — Faz 1: SCIP · Faz 2: CBC", est_seconds=8):
+                        with optimize_overlay("Hibrit motor çalışıyor — Faz 1: OR-Tools/CBC · Faz 2: PuLP/CBC", est_seconds=8):
                             st.session_state["_otd_ref_cache"] = run_stage_opt(sus, "OTD")
                     _opt_ref = st.session_state.get("_otd_ref_cache")
                     if _opt_ref is None:
