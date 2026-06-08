@@ -1,34 +1,32 @@
 """
-phase1_ortools.py — Hibrit Çözücü FAZ 1 (OR-Tools pywraplp / CBC)
-=================================================================
-Görev   : Kombinatoryal atama + setup minimizasyonu.
-Çıktı   : yO, zO, yM, zM (ikili kararlar) → Faz 2 için SABİT parametre.
+phase1_ortools.py — Hibrit Çözücü FAZ 1 (OR-Tools / CBC)
+==========================================================
+Görev   : Kombinatoryal atama ve setup minimizasyonu.
+Çıktı   : yO, zO, yM, zM (ikili kararlar)
+          → Faz 2 (PuLP+CBC) için SABİT parametre olarak aktarılır.
 
-Amaç    : min Σ zO  +  M × Σ dU_t
-            M = 1000 (band uyumu setup'a güçlü biçimde öncelikli)
-            dU_t  = günlük toplam OTD üretiminin alt band altı açığı (slack)
+Bu faz, OR-Tools'un güçlü olduğu yere odaklanır:
+  - Çok ikili değişken, BoolVar tabanlı atama
+  - Setup tespiti (sequence-independent)
+  - branch-and-cut hızı (CBC)
+Bu fazda üretim miktarları (xO, xM, xT) ve stoklar (KSO, KSM, KST)
+de modelin içindedir, çünkü atamaların FİZİBİL olduğunu doğrulamak
+gerekir; ama amaç fonksiyonunda yalnızca OTD SETUP cezalandırılır.
+Buffer ağırlığı 0 → Faz 1 buffer'a kayıtsız, sadece setup düşürür.
 
-Kısıtlar:
-  (P1.1)  Σ_k yO[k,l,t] ≤ 1          — hat başına en fazla 1 kart / gün
-  (P1.2)  zO[l,t] ≥ yO[k,l,t] - yO[k,l,t-1]  — OTD setup tespiti
-  (P1.3)  wO = yO ∧ zO                — linearize produktif zaman
-  (P1.4)  Σ_k yM[k,m,t] ≤ 1          — MD hat başına en fazla 1 kart
-  (P1.5)  zM[m,t] ≥ yM[k,m,t] - yM[k,m,t-1]  — MD setup (yalnız raporlama)
-  (P1.6)  pM ≤ tempo_md × yM
-  (P1.7)  MD kapasite tavanı (S_MD = 0)
-  (P1.8)  KSO denge (≥ 0 hard)
-  (P1.9)  KSM denge (≥ 0 hard)
-  (P1.10) KST denge (≥ 0 hard)
-  (P1.11) Σ_k Σ_l prod(k,l,t) + dU_t ≥ daily_total_min  — SOFT alt band
-  (P1.12) Üst band Faz 1'de UYGULANMAZ (infeasibility kaynağı) — Faz 2'de SOFT
-
-2026-06 Düzeltmeleri:
-  • S_MD = 0.0 — tez Kısıt (16): MD geçişinde kurulum kaybı yok
-  • Amaç: YALNIZCA OTD setup + band cezası (MD cezalandırılmaz)
-  • P1.11 EKLENDİ: Faz 1'i kart atamaya zorlayan band kısıtları
-    Neden: P1.11/12 olmadan, init_kso yeterli büyüklükte ise Faz 1'in
-    trivial optimal çözümü "yO=0 her yerde" olur → Faz 2'ye sıfır atama gelir
-    → kullanıcı hiç kart görmez, stoklar bozulur.
+────────────────────────────────────────────────────────────────────
+2026-06 DÜZELTMELERİ (tez ile tutarlılık):
+  • MD kurulum kaybı KALDIRILDI → S_MD = 0.0
+    Gerekçe: Tez Bölüm 3.6.3 Kısıt (16): "MD slotları arasındaki
+    geçişte kurulum kaybı modele alınmaz." (operatör seviyesi geçiş)
+  • Amaç fonksiyonu YALNIZCA OTD setup'ı minimize eder → min Σ zO
+    Gerekçe: Tez Bölüm 3.5: "Birinci ölçüt OTD aşamasında yapılan
+    toplam kart değişimi sayısıdır." (sonuc.json: 7 setup, hepsi OTD;
+    MD değişimleri serbest "md_onarim" kararlarıdır, cezalandırılmaz.)
+  • Hata mesajı düzeltildi (çözücü CBC, SCIP değil).
+  • zM ikili değişkenleri KORUNDU → dashboard "MD Setup Geçişleri"
+    raporlaması için; ancak amaca ve kapasiteye etki etmez.
+────────────────────────────────────────────────────────────────────
 
 Yazar   : Mehmet Ensar & Ege — YTÜ Endüstri Müh. Bitirme Projesi
 """
@@ -38,21 +36,15 @@ from ortools.linear_solver import pywraplp
 from typing import Any
 
 S_OTD = 0.50   # OTD setup kapasite kaybı (%50) — Tez Bölüm 3.6.1
-S_MD  = 0.0    # MD setup kaybı YOK — Tez Kısıt (16)
-
-M_BAND = 1000.0   # Band ihlali ceza katsayısı (M >> max_setups ≈ 98)
+S_MD  = 0.0    # MD setup kaybı YOK — Tez Kısıt (16). (Eski hatalı değer: 0.05)
 
 
 def solve_phase1(data: dict[str, Any],
-                 time_limit_sec: int = 60,
-                 daily_total_min: float = 2600.0,
-                 daily_total_max: float = 3100.0) -> dict[str, Any]:
+                 time_limit_sec: int = 60) -> dict[str, Any]:
     """
-    Faz 1: Günlük üretim band kısıtları altında OTD setup minimizasyonu.
-
-    Amaç: min Σ zO + M × Σ dU_t
-      M=1000 >> max_setups (~98) → band uyumu setup azaltmaya öncelidir.
-      dU_t = günlük üretimin daily_total_min altında kalan miktarı (slack ≥ 0).
+    Faz 1: yalnızca toplam OTD setup'ını minimize eder.
+    Atamaları (yO, zO, yM, zM) ve bunlardan türeyen OTD üretim ifadesini
+    Faz 2'ye iletir. Tampon stoklar bu fazda da hesaplanır ama amaca girmez.
     """
     K       = data["kartlar"]
     K_MD    = data["kartlar_md"]
@@ -74,9 +66,11 @@ def solve_phase1(data: dict[str, Any],
     if not solver:
         return {"status": "ERROR", "message": "CBC çözücü yüklenemedi."}
     solver.SetTimeLimit(time_limit_sec * 1000)
+    # NOT: solver.SetRelativeMipGap OR-Tools 9.15+ sürümünde kaldırıldı.
+    # Optimallik boşluğu yerine SetTimeLimit ile zaman aşımı kullanılır.
     inf = solver.infinity()
 
-    # ─── OTD ikili değişkenleri ───────────────────────────────────────────────
+    # --- OTD ikili değişkenleri ---
     yO, zO, wO = {}, {}, {}
     for k in K:
         for l in L_OTD:
@@ -89,7 +83,7 @@ def solve_phase1(data: dict[str, Any],
     for (k, l, t) in yO:
         wO[k, l, t] = solver.BoolVar(f"wO_{k}_{l}_{t}")
 
-    # ─── MD ikili değişkenleri + sürekli üretim ───────────────────────────────
+    # --- MD ikili değişkenleri + sürekli üretim ---
     yM, zM, pM = {}, {}, {}
     for k in K_MD:
         for m in L_MD:
@@ -106,30 +100,29 @@ def solve_phase1(data: dict[str, Any],
                 if cap > 0:
                     pM[k, m, t] = solver.NumVar(0, cap, f"pM_{k}_{m}_{t}")
 
-    # ─── TA üretim + stoklar ──────────────────────────────────────────────────
+    # --- TA üretim + stoklar (fizibilite için gerekli) ---
     pT  = {(k, t): solver.NumVar(0, ta_cap.get((k, t), 0), f"pT_{k}_{t}")
            for k in K for t in days}
-    KSO = {(k, t): solver.NumVar(0, inf, f"KSO_{k}_{t}") for k in K for t in days}
-    KSM = {(k, t): solver.NumVar(0, inf, f"KSM_{k}_{t}") for k in K_MD for t in days}
-    KST = {(k, t): solver.NumVar(0, inf, f"KST_{k}_{t}") for k in K for t in days}
+    KSO = {(k, t): solver.NumVar(0, inf, f"KSO_{k}_{t}")
+           for k in K for t in days}
+    KSM = {(k, t): solver.NumVar(0, inf, f"KSM_{k}_{t}")
+           for k in K_MD for t in days}
+    KST = {(k, t): solver.NumVar(0, inf, f"KST_{k}_{t}")
+           for k in K for t in days}
 
-    # ─── Band slack değişkeni ─────────────────────────────────────────────────
-    dU_p1 = {t: solver.NumVar(0, inf, f"dU_p1_{t}") for t in days}
-
-    # ─── (P1.1) Tek kart / OTD hat / gün ────────────────────────────────────
+    # --- OTD kısıtları ---
     for l in L_OTD:
         for t in days:
             c = [yO[k, l, t] for k in K if (k, l, t) in yO]
             if c:
-                solver.Add(sum(c) <= 1)
+                solver.Add(sum(c) <= 1)   # (P1.1) tek kart/hat/gün
 
-    # ─── (P1.2) OTD setup tespiti ────────────────────────────────────────────
     for l in L_OTD:
         for t in days:
             if t == 0:
                 for k in K:
                     if (k, l, 0) in yO:
-                        solver.Add(zO[l, 0] >= yO[k, l, 0])
+                        solver.Add(zO[l, 0] >= yO[k, l, 0])   # (P1.2) setup tespiti
             else:
                 for k in K:
                     if (k, l, t) in yO:
@@ -139,26 +132,24 @@ def solve_phase1(data: dict[str, Any],
                         else:
                             solver.Add(zO[l, t] >= yO[k, l, t])
 
-    # ─── (P1.3) wO = yO ∧ zO ────────────────────────────────────────────────
-    for (k, l, t) in wO:
+    for (k, l, t) in wO:                                       # (P1.3) wO = yO ∧ zO
         solver.Add(wO[k, l, t] <= yO[k, l, t])
         solver.Add(wO[k, l, t] <= zO[l, t])
         solver.Add(wO[k, l, t] >= yO[k, l, t] + zO[l, t] - 1)
 
-    # ─── (P1.4) Tek kart / MD hat / gün ────────────────────────────────────
+    # --- MD kısıtları ---
     for m in L_MD:
         for t in days:
             c = [yM[k, m, t] for k in K_MD if (k, m, t) in yM]
             if c:
-                solver.Add(sum(c) <= 1)
+                solver.Add(sum(c) <= 1)                        # (P1.4) tek kart/MD hat/gün
 
-    # ─── (P1.5) MD setup tespiti (yalnız raporlama; amaca DAHİL DEĞİL) ───────
     for m in L_MD:
         for t in days:
             if t == 0:
                 for k in K_MD:
                     if (k, m, 0) in yM:
-                        solver.Add(zM[m, 0] >= yM[k, m, 0])
+                        solver.Add(zM[m, 0] >= yM[k, m, 0])    # (P1.5) MD setup tespiti (yalnızca raporlama)
             else:
                 for k in K_MD:
                     if (k, m, t) in yM:
@@ -168,19 +159,21 @@ def solve_phase1(data: dict[str, Any],
                         else:
                             solver.Add(zM[m, t] >= yM[k, m, t])
 
-    # ─── (P1.6) MD üretim ≤ tempo × yM ─────────────────────────────────────
     for (k, m, t), var in pM.items():
-        solver.Add(var <= tempo_md[(k, m)] * yM[k, m, t])
+        solver.Add(var <= tempo_md[(k, m)] * yM[k, m, t])      # (P1.6) MD üretim ≤ tempo·yM (atanmamış kart → 0)
 
-    # ─── (P1.7) MD hat kapasite tavanı (S_MD = 0) ───────────────────────────
+    # (P1.7) MD hat günlük kapasite tavanı.
+    # NOT: S_MD = 0 olduğu için bu kısıt artık SETUP KAYBI içermez; yalnızca
+    # düz kapasite tavanıdır ve P1.6 + P1.4 tarafından zaten örtülür (gereksiz
+    # ama zararsız geçerli eşitsizlik). Tez Kısıt (16): MD'de kurulum kaybı yok.
     for m in L_MD:
         for t in days:
             prods = [pM[k, m, t] for k in K_MD if (k, m, t) in pM]
             if prods:
                 max_md = max(tempo_md.get((kk, m), 0) for kk in K_MD)
-                solver.Add(sum(prods) <= max_md)
+                solver.Add(sum(prods) <= max_md * (1 - S_MD * zM[m, t]))
 
-    # ─── OTD üretim ifadesi ──────────────────────────────────────────────────
+    # --- OTD deterministik üretim ifadesi ---
     def otd_prod(k, t):
         terms = []
         for l in L_OTD:
@@ -192,80 +185,59 @@ def solve_phase1(data: dict[str, Any],
     def md_prod(k, t):
         return sum(pM[k, m, t] for m in L_MD if (k, m, t) in pM)
 
-    # ─── (P1.8) KSO denge ────────────────────────────────────────────────────
+    # --- Stok denge denklemleri (fizibilite ZORUNLU) ---
     for k in K:
         for t in days:
             prev = KSO[k, t-1] if t > 0 else init_kso.get(k, 0)
             otd = otd_prod(k, t)
             if k in K_MD:
-                solver.Add(KSO[k, t] == prev + otd - md_prod(k, t))
+                solver.Add(KSO[k, t] == prev + otd - md_prod(k, t))       # (P1.8) KSO MD'li
             else:
-                solver.Add(KSO[k, t] == prev + otd - pT[k, t])
+                solver.Add(KSO[k, t] == prev + otd - pT[k, t])            # (P1.8) KSO MD-skip
 
-    # ─── (P1.9) KSM denge ────────────────────────────────────────────────────
     for k in K_MD:
         for t in days:
             prev = KSM[k, t-1] if t > 0 else init_ksm.get(k, 0)
-            solver.Add(KSM[k, t] == prev + md_prod(k, t) - pT[k, t])
+            solver.Add(KSM[k, t] == prev + md_prod(k, t) - pT[k, t])      # (P1.9) KSM denge
 
-    # ─── (P1.10) KST denge ───────────────────────────────────────────────────
     for k in K:
         for t in days:
             prev = KST[k, t-1] if t > 0 else init_kst.get(k, 0)
-            solver.Add(KST[k, t] == prev + pT[k, t] - demand.get((k, t), 0))
+            solver.Add(KST[k, t] == prev + pT[k, t] - demand.get((k, t), 0))   # (P1.10) KST denge
 
-    # ─── (P1.11) Günlük OTD üretim SOFT alt band ─────────────────────────────
-    # Σ_k Σ_l prod(k,l,t) + dU_p1[t] ≥ daily_total_min
-    # dU_p1 ≥ 0; ceza = M × dU_p1 >> max_setups → band uyumu öncelikli.
-    # NOT: P1.12 (üst band) KASITLI OLARAK YOK — 6 OTD hattı doğal günlük
-    # üretim 5000-6000 adet, 3100 tavanı tüm senaryoları infeasible yapıyordu.
-    # Üst band yalnız Faz 2'de SOFT kısıt olarak uygulanır.
-    for t in days:
-        terms_t = [
-            tempo_otd[(k, l)] * yO[k, l, t] - tempo_otd[(k, l)] * S_OTD * wO[k, l, t]
-            for k in K for l in L_OTD if (k, l, t) in yO
-        ]
-        if terms_t:
-            solver.Add(sum(terms_t) + dU_p1[t] >= daily_total_min)
-        else:
-            solver.Add(dU_p1[t] >= daily_total_min)
-
-    # ─── AMAÇ FONKSİYONU ─────────────────────────────────────────────────────
-    # min Σ zO  +  M × Σ dU_p1[t]
-    # M=1000 >> max_setups (~6×14=84) → band uyumu her zaman önce sağlanır.
-    # zM: raporlama amaçlı saklanır, amaca dahil edilmez (MD setup serbest).
-    total_otd_z  = sum(zO[l, t] for l in L_OTD for t in days)
-    total_dU     = sum(dU_p1[t] for t in days)
-    solver.Minimize(total_otd_z + M_BAND * total_dU)
+    # --- AMAÇ FONKSİYONU (FAZ 1): yalnızca OTD setup ---
+    total_otd_z = sum(zO[l, t] for l in L_OTD for t in days)
+    total_md_z  = sum(zM[m, t] for m in L_MD  for t in days)   # raporlama amaçlı; amaca DAHİL DEĞİL
+    solver.Minimize(total_otd_z)                               # (P1.OBJ) min Σ zO — Tez Bölüm 3.5
 
     status = solver.Solve()
     if status not in (pywraplp.Solver.OPTIMAL, pywraplp.Solver.FEASIBLE):
         return {"status": "INFEASIBLE",
-                "message": "Faz 1: Fizibil atama bulunamadı. "
-                           "Kapasite < talep veya band çok dar."}
+                "message": "Faz 1: Fizibil atama bulunamadı."}
 
-    smap = {pywraplp.Solver.OPTIMAL: "OPTIMAL", pywraplp.Solver.FEASIBLE: "FEASIBLE"}
+    smap = {pywraplp.Solver.OPTIMAL: "OPTIMAL",
+            pywraplp.Solver.FEASIBLE: "FEASIBLE"}
 
-    yO_fixed = {key: 1 for key, v in yO.items() if v.solution_value() > 0.5}
-    zO_fixed = {key: 1 for key, v in zO.items() if v.solution_value() > 0.5}
-    yM_fixed = {key: 1 for key, v in yM.items() if v.solution_value() > 0.5}
-    zM_fixed = {key: 1 for key, v in zM.items() if v.solution_value() > 0.5}
-
-    # Günlük üretim band açığı (raporlama)
-    daily_under_vals = {t: round(dU_p1[t].solution_value(), 1) for t in days}
-    total_dU_val = sum(daily_under_vals.values())
+    # --- Faz 2'ye aktarılacak SABİT atama kararları ---
+    yO_fixed = {key: int(round(v.solution_value()))
+                for key, v in yO.items() if v.solution_value() > 0.5}
+    zO_fixed = {key: int(round(v.solution_value()))
+                for key, v in zO.items() if v.solution_value() > 0.5}
+    yM_fixed = {key: int(round(v.solution_value()))
+                for key, v in yM.items() if v.solution_value() > 0.5}
+    zM_fixed = {key: int(round(v.solution_value()))
+                for key, v in zM.items() if v.solution_value() > 0.5}
 
     return {
         "status": smap.get(status, "UNKNOWN"),
-        "phase1_setups":     int(round(solver.Objective().Value() - M_BAND * total_dU_val)),
+        # Amaç değeri = OTD setup sayısı (MD artık cezalandırılmıyor)
+        "phase1_setups": int(round(solver.Objective().Value())),
         "phase1_otd_setups": len(zO_fixed),
-        "phase1_md_setups":  len(zM_fixed),
+        "phase1_md_setups":  len(zM_fixed),   # raporlama (serbest MD değişimleri)
         "phase1_solve_time": round(solver.wall_time() / 1000, 2),
         "phase1_num_vars":   solver.NumVariables(),
         "phase1_num_cons":   solver.NumConstraints(),
-        "phase1_daily_under": daily_under_vals,
-        "phase1_band_total_under": round(total_dU_val, 1),
-        # Faz 2'ye aktarılan sabit kararlar:
+        # Faz 2'ye geçecek sabit kararlar:
         "yO_fixed": yO_fixed,
         "zO_fixed": zO_fixed,
         "yM_fixed": yM_fixed,
