@@ -29,10 +29,16 @@ def solve_phase2(data: dict[str, Any],
                  time_limit_sec: int = 60,
                  daily_total_min: float = 2600.0,
                  daily_total_max: float = 3100.0,
-                 stock_band_low_ratio: float = 0.80,
-                 stock_band_high_ratio: float = 1.20) -> dict[str, Any]:
+                 stock_band_low: float = 0.80,
+                 stock_band_high: float = 1.20,
+                 # Geri uyumluluk: eski _ratio adlari
+                 stock_band_low_ratio: float = None,
+                 stock_band_high_ratio: float = None) -> dict[str, Any]:
     """Faz 2: Atamalar sabit, üretim ve buffer değişken.
     Çok hedef ağırlıklı: bant ihlali + alt bant açığı + buffer."""
+    # Eski isimleri yenisi ile birlestir
+    if stock_band_low_ratio  is not None: stock_band_low  = stock_band_low_ratio
+    if stock_band_high_ratio is not None: stock_band_high = stock_band_high_ratio
     K       = data["kartlar"]
     K_MD    = data["kartlar_md"]
     K_SKIP  = data["kartlar_skip"]
@@ -60,8 +66,8 @@ def solve_phase2(data: dict[str, Any],
         vals = [tempo_otd[(k, l)] for l in L_OTD if (k, l) in tempo_otd]
         max_tempo_k[k] = max(vals) if vals else 0.0
 
-    band_low  = {k: max_tempo_k[k] * stock_band_low_ratio  for k in K}
-    band_high = {k: max_tempo_k[k] * stock_band_high_ratio for k in K}
+    band_low  = {k: max_tempo_k[k] * stock_band_low  for k in K}
+    band_high = {k: max_tempo_k[k] * stock_band_high for k in K}
 
     prob = pulp.LpProblem("Beko_Hybrid_Phase2_v2", pulp.LpMinimize)
 
@@ -93,6 +99,10 @@ def solve_phase2(data: dict[str, Any],
     s_over  = {(k, t): pulp.LpVariable(f"sO_{k}_{t}", lowBound=0) for k in K for t in days}
     # Günlük toplam üretim alt bandı açığı
     d_under = {t: pulp.LpVariable(f"dU_{t}", lowBound=0) for t in days}
+    # Günlük toplam üretim üst bandı aşımı (slack)
+    # NOT: P2.4 (üst sınır) artık HARD değil SOFT — gerçek Beko verisi 5000-6000/gün
+    # gerektirdiği için 3100 hard tavanı Faz 2'yi infeasible yapıyordu.
+    d_over  = {t: pulp.LpVariable(f"dO_{t}", lowBound=0) for t in days}
 
     def otd_prod(k, t):
         return pulp.lpSum(xO[k, l, t] for l in L_OTD if (k, l, t) in xO)
@@ -125,13 +135,14 @@ def solve_phase2(data: dict[str, Any],
             prob += (KST[k, t] == prev + xT[k, t] - demand.get((k, t), 0),
                      f"denge_KST_{k}_{t}")
 
-    # --- (P2.4) Günlük toplam OTD üretimi HARD üst sınır ---
-    # Σ_k Σ_l xO[k,l,t] ≤ daily_total_max
+    # --- (P2.4) Günlük toplam OTD üretimi SOFT üst sınır ---
+    # Σ_k Σ_l xO[k,l,t] - d_over[t] ≤ daily_total_max
+    # d_over[t] ≥ 0 → üst sınırı geçerse slack devreye girer, cezalandırılır.
     for t in days:
         daily_sum = pulp.lpSum(xO[k, l, t]
                                for (k, l, tt) in xO if tt == t)
-        prob += (daily_sum <= daily_total_max,
-                 f"daily_max_{t}")
+        prob += (daily_sum - d_over[t] <= daily_total_max,
+                 f"daily_max_soft_{t}")
 
     # --- (P2.5) Günlük toplam OTD üretimi SOFT alt sınır ---
     # Σ_k Σ_l xO[k,l,t] + d_under[t] ≥ daily_total_min
@@ -159,7 +170,7 @@ def solve_phase2(data: dict[str, Any],
                   + pulp.lpSum(KST[k, t] for k in K for t in days))
     obj_band = (pulp.lpSum(s_under[k, t] for k in K for t in days if max_tempo_k[k] > 0)
                 + pulp.lpSum(s_over[k, t]  for k in K for t in days if max_tempo_k[k] > 0))
-    obj_daily = pulp.lpSum(d_under[t] for t in days)
+    obj_daily = pulp.lpSum(d_under[t] + d_over[t] for t in days)
 
     prob += (W_BAND_OVER * obj_band
              + W_DAILY_LOW * obj_daily
@@ -196,6 +207,7 @@ def solve_phase2(data: dict[str, Any],
         for k in K for t in days if max_tempo_k[k] > 0
     )
     daily_under_total = sum(d_under[t].varValue or 0 for t in days)
+    daily_over_total  = sum(d_over[t].varValue or 0  for t in days)
 
     return {
         "status": "OPTIMAL" if prob.status == pulp.LpStatusOptimal else "FEASIBLE",
@@ -205,6 +217,7 @@ def solve_phase2(data: dict[str, Any],
         "phase2_num_cons": len(prob.constraints),
         "phase2_band_violation": round(band_total_violation),
         "phase2_daily_under":    round(daily_under_total),
+        "phase2_daily_over":     round(daily_over_total),
         "prod_otd": r_prod_otd,
         "prod_md":  r_prod_md,
         "prod_ta":  r_prod_ta,
