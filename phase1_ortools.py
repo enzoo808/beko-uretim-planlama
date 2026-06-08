@@ -20,12 +20,12 @@ Kısıtlar:
   (P1.9)  KSM denge (≥ 0 hard)
   (P1.10) KST denge (≥ 0 hard)
   (P1.11) Σ_k Σ_l prod(k,l,t) + dU_t ≥ daily_total_min  — SOFT alt band
-  (P1.12) Σ_k Σ_l prod(k,l,t) ≤ daily_total_max          — HARD üst band
+  (P1.12) Üst band Faz 1'de UYGULANMAZ (infeasibility kaynağı) — Faz 2'de SOFT
 
 2026-06 Düzeltmeleri:
   • S_MD = 0.0 — tez Kısıt (16): MD geçişinde kurulum kaybı yok
   • Amaç: YALNIZCA OTD setup + band cezası (MD cezalandırılmaz)
-  • P1.11–P1.12 EKLENDİ: Faz 1'i kart atamaya zorlayan band kısıtları
+  • P1.11 EKLENDİ: Faz 1'i kart atamaya zorlayan band kısıtları
     Neden: P1.11/12 olmadan, init_kso yeterli büyüklükte ise Faz 1'in
     trivial optimal çözümü "yO=0 her yerde" olur → Faz 2'ye sıfır atama gelir
     → kullanıcı hiç kart görmez, stoklar bozulur.
@@ -217,6 +217,9 @@ def solve_phase1(data: dict[str, Any],
     # ─── (P1.11) Günlük OTD üretim SOFT alt band ─────────────────────────────
     # Σ_k Σ_l prod(k,l,t) + dU_p1[t] ≥ daily_total_min
     # dU_p1 ≥ 0; ceza = M × dU_p1 >> max_setups → band uyumu öncelikli.
+    # NOT: P1.12 (üst band) KASITLI OLARAK YOK — 6 OTD hattı doğal günlük
+    # üretim 5000-6000 adet, 3100 tavanı tüm senaryoları infeasible yapıyordu.
+    # Üst band yalnız Faz 2'de SOFT kısıt olarak uygulanır.
     for t in days:
         terms_t = [
             tempo_otd[(k, l)] * yO[k, l, t] - tempo_otd[(k, l)] * S_OTD * wO[k, l, t]
@@ -225,18 +228,7 @@ def solve_phase1(data: dict[str, Any],
         if terms_t:
             solver.Add(sum(terms_t) + dU_p1[t] >= daily_total_min)
         else:
-            # Hiç uyumlu kart/hat yoksa sadece slack ile kısıtı sağla
             solver.Add(dU_p1[t] >= daily_total_min)
-
-    # ─── (P1.12) Günlük OTD üretim HARD üst band ─────────────────────────────
-    # Σ_k Σ_l prod(k,l,t) ≤ daily_total_max
-    for t in days:
-        terms_t = [
-            tempo_otd[(k, l)] * yO[k, l, t] - tempo_otd[(k, l)] * S_OTD * wO[k, l, t]
-            for k in K for l in L_OTD if (k, l, t) in yO
-        ]
-        if terms_t:
-            solver.Add(sum(terms_t) <= daily_total_max)
 
     # ─── AMAÇ FONKSİYONU ─────────────────────────────────────────────────────
     # min Σ zO  +  M × Σ dU_p1[t]
