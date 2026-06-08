@@ -1351,7 +1351,7 @@ def run_stage_opt(plan, stage):
 # v3.3 — Bant kısıtı + kart stok hedefi + 2 slot desteği
 # ─────────────────────────────────────────────────────────────────────────
 DAILY_TOTAL_MIN = 2600   # Günlük toplam OTD üretim alt bandı (yumuşak hedef)
-DAILY_TOTAL_MAX = 3100   # Günlük toplam OTD üretim üst bandı (yumuşak hedef)
+DAILY_TOTAL_MAX = 9999   # Günlük toplam OTD üretim üst bandı (pratikte sınırsız — 3100 infeasibility sebebiydi)
 STOCK_BAND_LOW  = 0.80   # Kart KSO hedef bandı: max_tempo × 0.80
 STOCK_BAND_HIGH = 1.20   # Kart KSO hedef bandı: max_tempo × 1.20
 
