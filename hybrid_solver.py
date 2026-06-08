@@ -3,15 +3,17 @@ hybrid_solver.py — Hibrit Çözücü Orkestrasyon
 ==============================================
 İki açık-kaynak çözücüyü problem yapısına göre bölüştürür:
 
-  FAZ 1 (OR-Tools / SCIP, phase1_ortools.py)
+  FAZ 1 (OR-Tools pywraplp / CBC, phase1_ortools.py)
      → İkili atama kararları: yO, zO, yM, zM
-     → Hedef: min Σ setup (OTD + MD)
+     → Hedef: min Σ zO (yalnız OTD setup — Tez Bölüm 3.5)
      → Güçlü yan: combinatorial branch-and-cut
+     → NOT: SCIP Streamlit Cloud'da yok; CBC kullanılır.
 
   FAZ 2 (PuLP / CBC, phase2_pulp.py)
      → Sürekli karar değişkenleri: xO, xM, xT, KSO, KSM, KST
      → Atamalar Faz 1'den SABİT parametre olarak gelir
-     → Hedef: min Σ (KSO + KSM + KST)
+     → Hedef: min (100·bant + 50·alt_band + 1·buffer) — yumuşak hedefler
+     → Hard: KSO/KSM/KST ≥ 0 ve günlük OTD ≤ daily_total_max
      → Güçlü yan: saf LP simplex hızı
 
 Bu modül, app.py'ın eskiden optimizer.solve(data, time_limit) ile
@@ -80,7 +82,7 @@ def solve(data: dict[str, Any],
         "daily_under":    r2.get("phase2_daily_under", 0),
         "solve_time_sec": round(r1["phase1_solve_time"] + r2["phase2_solve_time"], 2),
         # Faz-bazlı detay (dashboard'da gösterilebilir)
-        "phase1_solver":  "OR-Tools / SCIP",
+        "phase1_solver":  "OR-Tools pywraplp / CBC",
         "phase1_setups":  r1["phase1_setups"],
         "phase1_time":    r1["phase1_solve_time"],
         "phase2_solver":  "PuLP / CBC",
